@@ -1,0 +1,19 @@
+{
+  "expo": {
+    "name": "FactoryPulse",
+    "slug": "factorypulse",
+    "version": "1.0.0",
+    "scheme": "factorypulse",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "cover",
+      "backgroundColor": "#0f2027"
+    },
+    "android": {
+      "package": "com.kaank.factorypulse"
+    },
+    "ios": {
+      "bundleIdentifier": "com.kaank.factorypulse"
+    }
+  }
+}
