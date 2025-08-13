@@ -27,13 +27,14 @@ export default function MainScreen() {
 
   return (
     <LinearGradient
-      // Solda parlak, sağda koyu (soldan sağa akış)
-      colors={[tokens.bgBot, tokens.bgMid, tokens.bgTop]}
-      start={{ x: 0, y: 0.5 }}
-      end={{ x: 1, y: 0.5 }}
-      style={styles.container}
-      onLayout={onLayoutRootView}
-    >
+  // Sağda parlak, solda koyu (sağdan sola akış)
+  colors={[tokens.bgBot, tokens.bgMid, tokens.bgTop]}
+  start={{ x: 1, y: 0.5 }}
+  end={{ x: 0, y: 0.5 }}
+  style={styles.container}
+  onLayout={onLayoutRootView}
+>
+
       {/* Header */}
       <View style={styles.header}>
         <Text style={styles.appName}>FactoryPulse</Text>

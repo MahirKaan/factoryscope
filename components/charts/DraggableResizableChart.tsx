@@ -1,5 +1,4 @@
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
-
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Dimensions,
@@ -17,8 +16,10 @@ import { LineChart } from 'react-native-gifted-charts';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 type Dataset = { data: number[]; color: () => string };
-type Mode = 'floating' | 'docked';
+type Mode = 'floating' | 'docked' | 'free';
 type Variant = 'card' | 'fill';
+
+type VisualScale = 'auto' | 'raw' | 'minmax'; // ← yeni
 
 interface Props {
   data: Dataset[];
@@ -42,12 +43,15 @@ interface Props {
   onRequestUndock?: () => void;
 
   compact?: boolean;
-
-  /** Slot içinde de pinch açılsın mı? (sadece yükseklik değişir) */
   pinchEnabledInDocked?: boolean;
 
-  /** Kıvrımlı çizgi (gifted-charts 'curved') */
   curved?: boolean;
+
+  onHeightChange?: (h: number) => void;
+  persistKey?: string;
+
+  /** Çoklu seride çizgilerin kesişerek daha show görünmesi için görsel ölçek */
+  visualScale?: VisualScale; // default: 'auto' (çoklu seride minmax)
 }
 
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
@@ -55,7 +59,11 @@ const MIN_H = 120;
 const MAX_H = 560;
 const MIN_W = 220;
 
-// Kart padding’i (card stilinde 10)
+/* Daha yakın çizgi aralığı */
+const MIN_SPACING = 6;
+const SPACING_TIGHT_FACTOR = 0.75;
+
+// Kart padding’i
 const CARD_PAD = 10;
 const CARD_HPAD_TOTAL = CARD_PAD * 2;
 
@@ -87,20 +95,23 @@ export default function DraggableResizableChart({
   onRequestUndock,
   compact = false,
   pinchEnabledInDocked = true,
-  curved = true, // ← varsayılan: kıvrımlı
+  curved = true,
+  onHeightChange,
+  visualScale = 'auto',
 }: Props) {
   const insets = useSafeAreaInsets();
 
-  // ekran/safe-area → güvenli max genişlik
+  const isFloating = mode === 'floating' || mode === 'free';
+  const isDocked = mode === 'docked';
+
   const computeMaxW = (w: number) => {
-    const SAFE_SIDE_MARGINS = 24 + insets.left + insets.right; // 12px sağ/sol + insets
+    const SAFE_SIDE_MARGINS = 24 + insets.left + insets.right;
     return Math.max(MIN_W, w - SAFE_SIDE_MARGINS);
   };
 
   const [winW, setWinW] = useState(Dimensions.get('window').width);
   const [maxW, setMaxW] = useState<number>(computeMaxW(winW));
 
-  // Cihaza göre “dar” başlangıç
   const computeInitialFloatingW = (w: number) => {
     const safe = computeMaxW(w);
     let ratio = 0.84;
@@ -110,67 +121,78 @@ export default function DraggableResizableChart({
     return clamp(safe * ratio, MIN_W, safe);
   };
 
-  // Boyut durumları
-  const [containerW, setContainerW] = useState<number>(
-    mode === 'floating' ? computeInitialFloatingW(winW) : 0
-  );
+  const [containerW, setContainerW] = useState<number>(isFloating ? computeInitialFloatingW(winW) : 0);
   const [chartH, setChartH] = useState<number>(compact ? 160 : 280);
-  const [ready, setReady] = useState<boolean>(mode === 'floating'); // docked: ölçmeden çizme
+  const [ready, setReady] = useState<boolean>(isFloating);
 
-  // Orientation & insets değişimi
+  // Pointer’ı floating doğduğunda hemen aktif etmeyelim (baloncuk/donma bug’ı için)
+  const [pointerEnabled, setPointerEnabled] = useState<boolean>(!isFloating ? true : false);
+  useEffect(() => {
+    if (isFloating) {
+      const t = setTimeout(() => setPointerEnabled(true), 500);
+      return () => clearTimeout(t);
+    } else {
+      setPointerEnabled(true);
+    }
+  }, [isFloating]);
+
+  useEffect(() => { onHeightChange?.(chartH); }, [chartH, onHeightChange]);
+
   useEffect(() => {
     const onChange = ({ window }: { window: any }) => {
       setWinW(window.width);
       const newMax = computeMaxW(window.width);
       setMaxW(newMax);
-      if (mode === 'floating') setContainerW((prev) => clamp(prev, MIN_W, newMax));
+      if (isFloating) setContainerW(prev => clamp(prev, MIN_W, newMax));
     };
     const sub = Dimensions.addEventListener('change', onChange);
     return () => sub?.remove();
-  }, [mode, insets.left, insets.right]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isFloating, insets.left, insets.right]);
 
   useEffect(() => {
     const newMax = computeMaxW(winW);
     setMaxW(newMax);
-    if (mode === 'floating') {
-      setContainerW((prev) => (prev === 0 ? computeInitialFloatingW(winW) : clamp(prev, MIN_W, newMax)));
+    if (isFloating) {
+      setContainerW(prev => (prev === 0 ? computeInitialFloatingW(winW) : clamp(prev, MIN_W, newMax)));
     }
-  }, [insets.left, insets.right]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [insets.left, insets.right, winW, isFloating]);
 
-  // Slot içi yükseklik yönetimi
   useEffect(() => {
-    if (mode === 'docked') {
+    if (isDocked) {
       if (compact) { setChartH(160); return; }
       if (idealHeight && idealHeight > 0) {
         const h = variant === 'fill' ? idealHeight : Math.max(140, idealHeight - 64);
         setChartH(clamp(h, MIN_H, MAX_H));
       }
     }
-  }, [idealHeight, mode, variant, compact]);
+  }, [idealHeight, isDocked, variant, compact]);
 
-  // Floating konum/sürükleme
+  // Floating drag
   const [pos, setPos] = useState(initialPosition);
   const startPos = useRef(pos);
   const [dragging, setDragging] = useState(false);
 
   const dragResponder = useRef(
     PanResponder.create({
-      onStartShouldSetPanResponder: () => mode === 'floating',
+      onStartShouldSetPanResponder: (e: GestureResponderEvent) =>
+        isFloating && (e.nativeEvent.touches?.length ?? 0) === 1,
       onPanResponderGrant: () => {
-        if (mode !== 'floating') return;
+        if (!isFloating) return;
         startPos.current = { ...pos };
         setDragging(true);
         onDraggingChange?.(true);
       },
       onPanResponderMove: (_e: GestureResponderEvent, g: PanResponderGestureState) => {
-        if (mode !== 'floating') return;
+        if (!isFloating) return;
         const nx = clamp(startPos.current.x + g.dx, 0, Math.max(0, winW - containerW - 4));
         const ny = Math.max(0, startPos.current.y + g.dy);
         setPos({ x: nx, y: ny });
         onDragMove?.({ absX: g.moveX, absY: g.moveY });
       },
       onPanResponderRelease: async (_e, g) => {
-        if (mode !== 'floating') return;
+        if (!isFloating) return;
         setDragging(false);
         onDraggingChange?.(false);
         if (onDropGesture && onDrop) {
@@ -181,16 +203,14 @@ export default function DraggableResizableChart({
     }),
   ).current;
 
-  // Pinch zoom: floating → W+H, docked → sadece H
+  // Pinch
   const pinchBase = useRef({ dist: 0, w: 0, h: 0 });
   const pinchResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: (e) =>
-        (mode === 'floating' || (mode === 'docked' && pinchEnabledInDocked)) &&
-        e.nativeEvent.touches.length >= 2,
+        (isFloating || (isDocked && pinchEnabledInDocked)) && e.nativeEvent.touches.length >= 2,
       onMoveShouldSetPanResponder: (e) =>
-        (mode === 'floating' || (mode === 'docked' && pinchEnabledInDocked)) &&
-        e.nativeEvent.touches.length >= 2,
+        (isFloating || (isDocked && pinchEnabledInDocked)) && e.nativeEvent.touches.length >= 2,
       onPanResponderGrant: (e) => {
         pinchBase.current = {
           dist: pinchDistance(e.nativeEvent.touches),
@@ -202,69 +222,94 @@ export default function DraggableResizableChart({
         const d = pinchDistance(e.nativeEvent.touches);
         if (!d || !pinchBase.current.dist) return;
         const scale = d / pinchBase.current.dist;
-
-        if (mode === 'floating') {
+        if (isFloating) {
           const safeMax = maxW;
           const newW = clamp(pinchBase.current.w * scale, MIN_W, safeMax);
           const newH = clamp(pinchBase.current.h * scale, MIN_H, MAX_H);
           setContainerW(newW);
           setChartH(newH);
-          setPos((p) => ({ x: clamp(p.x, 0, Math.max(0, winW - newW - 4)), y: p.y }));
-        } else if (mode === 'docked' && pinchEnabledInDocked) {
+          setPos(p => ({ x: clamp(p.x, 0, Math.max(0, winW - newW - 4)), y: p.y }));
+        } else if (isDocked && pinchEnabledInDocked) {
           const newH = clamp(pinchBase.current.h * scale, MIN_H, MAX_H);
-          setChartH(newH); // genişlik sabit (slot’a tam otursun)
+          setChartH(newH);
         }
       },
-      onPanResponderRelease: () => {},
       onPanResponderTerminationRequest: () => true,
     })
   ).current;
 
   /* --- DATA hazırlığı --- */
+  // 1) ortak kesişim boyutu
   const trimmed = useMemo(() => {
     const n = Math.min(labels?.length ?? 0, ...(data?.map(d => d.data.length) ?? [0]));
     const useLabels = (labels || []).slice(0, n);
     const useSeries = (data || []).slice(0, 4).map(ds => ({
       color: ds.color,
-      values: ds.data.slice(0, n),
+      values: ds.data.slice(0, n).map(v => (Number.isFinite(v) ? Number(v) : 0)),
     }));
     return { labels: useLabels, series: useSeries, n };
   }, [labels, data]);
 
+  // 2) görsel ölçek seçimi
+  const scaleMode: VisualScale =
+    visualScale === 'auto'
+      ? (trimmed.series.length > 1 ? 'minmax' : 'raw')
+      : visualScale;
+
+  // 3) serileri normalize et (min–max → 0..100) ⇒ çizgiler kesişsin
+  const normalized = useMemo(() => {
+    if (scaleMode !== 'minmax') return trimmed.series.map(s => s.values);
+    return trimmed.series.map(s => {
+      const min = Math.min(...s.values);
+      const max = Math.max(...s.values);
+      if (!isFinite(min) || !isFinite(max) || max === min) {
+        return s.values.map(() => 50); // flat ise ortada çiz
+      }
+      return s.values.map(v => ((v - min) / (max - min)) * 100);
+    });
+  }, [trimmed.series, scaleMode]);
+
+  // 4) chart noktaları
   const series = useMemo(() => {
-    const { n } = trimmed;
+    const n = trimmed.n;
     const mid = n > 0 ? Math.floor((n - 1) / 2) : 0;
-    return trimmed.series.map((ds, si) =>
-      ds.values.map((v, i) => ({
+    return normalized.map((vals, si) =>
+      vals.map((v, i) => ({
         value: Number.isFinite(v) ? v : 0,
         label: i === 0 || i === mid || i === n - 1 ? (trimmed.labels?.[i] ?? String(i)) : '',
         _series: tags?.[si] ?? `Series ${si + 1}`,
-      })),
+      }))
     );
-  }, [trimmed, tags]);
+  }, [normalized, trimmed, tags]);
 
+  // 5) eksen domain
   const allVals = useMemo(() => series.flat().map(p => p.value).filter(Number.isFinite), [series]);
   const { minY, maxY } = useMemo(() => {
+    if (scaleMode === 'minmax') return { minY: 0, maxY: 100 };
     if (!allVals.length) return { minY: 0, maxY: 1 };
     let min = Math.min(...allVals);
     let max = Math.max(...allVals);
     if (min === max) { min -= 1; max += 1; }
     const pad = Math.max(1, (max - min) * 0.1);
     return { minY: Math.floor(min - pad), maxY: Math.ceil(max + pad) };
-  }, [allVals]);
-  const domainProps = useMemo(() => (minY < 0 ? { mostNegativeValue: minY } : ({} as Record<string, unknown>)), [minY]);
+  }, [allVals, scaleMode]);
+
+  const domainProps = useMemo(
+    () => (minY < 0 ? { mostNegativeValue: minY } : ({} as Record<string, unknown>)),
+    [minY]
+  );
 
   const c1 = data?.[0]?.color?.() ?? '#60A5FA';
   const c2 = data?.[1]?.color?.();
   const c3 = data?.[2]?.color?.();
   const c4 = data?.[3]?.color?.();
 
-  // KONTEYNER + iç genişlik
+  // Container style
   const containerStyle: (ViewStyle | undefined)[] = [styles.card];
-  if (mode === 'docked' && variant === 'fill') {
+  if (isDocked && variant === 'fill') {
     containerStyle.push({ padding: 0, borderWidth: 0, borderRadius: 0, marginBottom: 0, backgroundColor: 'transparent' });
   }
-  if (mode === 'floating') {
+  if (isFloating) {
     containerStyle.push({
       width: containerW,
       position: 'absolute',
@@ -283,10 +328,17 @@ export default function DraggableResizableChart({
     containerStyle.push({ width: '100%', marginHorizontal: 0 });
   }
 
-  const showHeader = !(mode === 'docked' && variant === 'fill');
+  const showHeader = !(isDocked && variant === 'fill');
 
-  // Card padding çıkarılmış iç genişlik
+  // İç genişlik
   const innerW = Math.max(1, containerW - (variant === 'card' ? CARD_HPAD_TOTAL : 0));
+
+  // Daha sık spacing
+  const denseSpacing = useMemo(() => {
+    const points = Math.max(1, (trimmed.labels.length || 2) - 1);
+    const ideal = (innerW - 36) / points;
+    return Math.max(MIN_SPACING, ideal * SPACING_TIGHT_FACTOR);
+  }, [innerW, trimmed.labels.length]);
 
   const renderPointerLabel = (items: { value: number; label?: string; datasetIndex?: number }[]) => {
     if (!items || !items.length) return null;
@@ -298,11 +350,15 @@ export default function DraggableResizableChart({
         {items.map((it, idx) => {
           const color = colorArr[(it?.datasetIndex ?? idx) % colorArr.length] || '#93C5FD';
           const tagName = tags[(it?.datasetIndex ?? idx)] ?? `Series ${((it?.datasetIndex ?? idx) + 1)}`;
+          const valTxt =
+            scaleMode === 'minmax'
+              ? `${Number(it.value).toFixed(0)} / 100`
+              : Number(it.value).toLocaleString('tr-TR');
           return (
             <View key={`pt-${idx}`} style={styles.tooltipRow}>
               <View style={[styles.dot, { backgroundColor: color }]} />
               <Text style={styles.tooltipTxt}>
-                {tagName}: <Text style={styles.tooltipVal}>{Number(it.value).toLocaleString('tr-TR')}</Text>
+                {tagName}: <Text style={styles.tooltipVal}>{valTxt}</Text>
               </Text>
             </View>
           );
@@ -315,7 +371,7 @@ export default function DraggableResizableChart({
     <View
       style={containerStyle}
       onLayout={(e) => {
-        if (mode === 'docked') {
+        if (isDocked) {
           const w = e.nativeEvent.layout.width;
           if (w && (containerW === 0 || Math.abs(w - containerW) > 1)) {
             setContainerW(clamp(w, MIN_W, maxW));
@@ -326,7 +382,7 @@ export default function DraggableResizableChart({
     >
       {showHeader && (
         <View style={styles.header}>
-          {mode === 'floating' && (
+          {isFloating && (
             <View {...dragResponder.panHandlers} style={styles.dragHandle}>
               <MaterialCommunityIcons name="drag-vertical" size={22} color="#93C5FD" />
             </View>
@@ -340,7 +396,7 @@ export default function DraggableResizableChart({
             ))}
           </View>
           <View style={{ flexDirection:'row', gap:8 }}>
-            {mode === 'docked' && (
+            {isDocked && (
               <TouchableOpacity onPress={onRequestUndock} style={styles.iconBtn} hitSlop={{top:8,bottom:8,left:8,right:8}}>
                 <Feather name="maximize-2" size={18} color="#93C5FD" />
               </TouchableOpacity>
@@ -352,13 +408,9 @@ export default function DraggableResizableChart({
         </View>
       )}
 
-      {/* Chart alanı – pinch hem floating’te hem (opsiyonel) docked’ta */}
       <View
-        style={[
-          styles.chartWrap,
-          variant === 'fill' ? { marginTop: 0, width: '100%', height: chartH } : { width: innerW },
-        ]}
-        {...((mode === 'floating' || (mode === 'docked' && pinchEnabledInDocked)) ? pinchResponder.panHandlers : {})}
+        style={[styles.chartWrap, variant === 'fill' ? { marginTop: 0, width: '100%', height: chartH } : { width: innerW }]}
+        {...((isFloating || (isDocked && pinchEnabledInDocked)) ? pinchResponder.panHandlers : {})}
       >
         {ready && innerW > 0 && (
           <LineChart
@@ -368,8 +420,8 @@ export default function DraggableResizableChart({
             data2={series[1] ?? undefined}
             data3={series[2] ?? undefined}
             data4={series[3] ?? undefined}
-            curved={curved}              // ← kıvrım burada aktif
-            thickness={2}
+            curved={curved}
+            thickness={3}
             color={c1}
             color2={series[1] ? (c2 as string) : undefined}
             color3={series[2] ? (c3 as string) : undefined}
@@ -385,26 +437,30 @@ export default function DraggableResizableChart({
             noOfSections={4}
             maxValue={maxY}
             {...domainProps}
-            initialSpacing={14}
-            spacing={Math.max(12, (innerW - 42) / Math.max(1, (trimmed.labels.length || 2) - 1))}
-            pointerConfig={{
-              showPointerStrip: true,
-              pointerStripColor: 'rgba(148,163,184,0.35)',
-              pointerStripWidth: 1.5,
-              pointerStripUptoDataPoint: true,
-              pointerColor: '#93C5FD',
-              radius: 3,
-              activatePointersOnLongPress: false,
-              autoAdjustPointerLabelPosition: true,
-              pointerLabelWidth: 180,
-              pointerVanishDelay: 1200,
-              pointerLabelComponent: (items: any[]) => renderPointerLabel(items as any),
-            } as any}
+            initialSpacing={6}
+            spacing={denseSpacing}
+            endSpacing={0}
+            pointerConfig={
+              pointerEnabled
+                ? {
+                    showPointerStrip: true,
+                    pointerStripColor: 'rgba(148,163,184,0.35)',
+                    pointerStripWidth: 1.5,
+                    pointerStripUptoDataPoint: true,
+                    pointerColor: '#93C5FD',
+                    radius: 3,
+                    activatePointersOnLongPress: true, // uzun basınca
+                    autoAdjustPointerLabelPosition: true,
+                    pointerLabelWidth: 180,
+                    pointerVanishDelay: 900,
+                    pointerLabelComponent: (items: any[]) => renderPointerLabel(items as any),
+                  } as any
+                : undefined
+            }
           />
         )}
 
-        {/* Docked’ta uzun basıp undock – pinch açıksa bu overlay’i kaldırıyoruz */}
-        {mode === 'docked' && !pinchEnabledInDocked && (
+        {isDocked && !pinchEnabledInDocked && (
           <Pressable
             onLongPress={onRequestUndock}
             delayLongPress={280}
@@ -413,7 +469,7 @@ export default function DraggableResizableChart({
           />
         )}
 
-        {mode === 'docked' && variant === 'fill' && (
+        {isDocked && variant === 'fill' && (
           <TouchableOpacity onPress={onRequestUndock} style={styles.undockBtn} hitSlop={{ top:10, bottom:10, left:10, right:10 }}>
             <Feather name="external-link" size={16} color="#93C5FD" />
           </TouchableOpacity>

@@ -26,9 +26,6 @@ interface FactoryStatus {
   company: 'Petkim' | 'Star';
 }
 
-// ŞİRKET BAŞLIK SIRASI: Her zaman önce Star, sonra Petkim
-const COMPANY_ORDER: readonly FactoryStatus['company'][] = ['Star', 'Petkim'] as const;
-
 const INITIAL_FACTORIES: FactoryStatus[] = [
   { id: 'ca', name: 'CA', status: 'loading', company: 'Petkim' },
   { id: 'acn', name: 'ACN', status: 'loading', company: 'Petkim' },
@@ -119,7 +116,7 @@ export default function HomeScreen() {
     setTimeout(() => setRefreshing(false), 1200);
   };
 
-  // Metrikler (sadece filtre sayıları için)
+  // Metrikler
   const total = factories.length;
   const successCount = factories.filter((f) => f.status === 'success').length;
   const errorCount = factories.filter((f) => f.status === 'error').length;
@@ -135,7 +132,7 @@ export default function HomeScreen() {
     return list;
   }, [factories, filter, searchQuery]);
 
-  // Sıralama (duruma göre, sonra ada göre)
+  // Sıralama
   const sorted = useMemo(() => {
     const order: Record<Status, number> = { error: 0, loading: 1, success: 2 };
     const data = [...filtered];
@@ -145,17 +142,6 @@ export default function HomeScreen() {
     });
     return data;
   }, [filtered]);
-
-  // Şirket bazlı bölümleme — SABİT SIRA: Star → Petkim
-  const sections = useMemo(() => {
-    const groups: Record<'Star' | 'Petkim', FactoryStatus[]> = { Star: [], Petkim: [] };
-    for (const f of sorted) {
-      groups[f.company].push(f);
-    }
-    return COMPANY_ORDER
-      .filter((c) => groups[c].length > 0)
-      .map((c) => ({ title: c, data: groups[c] }));
-  }, [sorted]);
 
   const isAllLoading = factories.every((f) => f.status === 'loading');
 
@@ -174,12 +160,6 @@ export default function HomeScreen() {
       </BlurView>
     );
   };
-
-  const SectionHeader = ({ title }: { title: string }) => (
-    <View style={[styles.sectionHeader, { backgroundColor: COLORS.bg }]}>
-      <Text style={[styles.sectionTitle, { color: COLORS.textSecondary }]}>{title}</Text>
-    </View>
-  );
 
   const Row = ({ item }: { item: FactoryStatus }) => {
     const barColor =
@@ -210,18 +190,24 @@ export default function HomeScreen() {
             })
           }
         >
+          {/* Sol kolon: isim + altında şirket */}
           <View style={{ flex: 1 }}>
             <View style={styles.cardHeader}>
               <Ionicons name="business" size={16} color={COLORS.textPrimary} style={styles.iconShadow} />
               <Text style={[styles.cardName, { color: COLORS.textPrimary }]} numberOfLines={1}>
                 {item.name}
               </Text>
-              <Text style={[styles.cardCompany, { color: COLORS.textSecondary }]} numberOfLines={1}>
-                • {item.company}
-              </Text>
             </View>
 
-            <View style={styles.metaRow}>
+            <Text style={[styles.cardCompanyUnder, { color: COLORS.textSecondary }]} numberOfLines={1}>
+              {item.company}
+            </Text>
+          </View>
+
+          {/* Sağ kolon: durum pill + altında süre */}
+          <View style={styles.rightCol}>
+            <StatusPill status={item.status} />
+            <View style={styles.timeUnderPill}>
               <Ionicons name="time-outline" size={14} color={COLORS.textSecondary} />
               <Text style={[styles.cardTime, { color: COLORS.textSecondary }]}>
                 {' '}
@@ -229,8 +215,6 @@ export default function HomeScreen() {
               </Text>
             </View>
           </View>
-
-          <StatusPill status={item.status} />
         </TouchableOpacity>
       </Animated.View>
     );
@@ -316,7 +300,6 @@ export default function HomeScreen() {
     </View>
   );
 
-  const renderSectionHeader = ({ section }: any) => <SectionHeader title={section.title} />;
   const renderItem = ({ item }: { item: FactoryStatus }) => <Row item={item} />;
 
   return (
@@ -325,12 +308,12 @@ export default function HomeScreen() {
         sections={
           isAllLoading
             ? [{ title: '', data: Array.from({ length: 6 }).map((_, i) => ({ id: String(i) } as any)) }]
-            : sections
+            : [{ title: '', data: sorted }]
         }
         keyExtractor={(item: any) => item.id}
         renderItem={isAllLoading ? () => <SkeletonRow /> : renderItem}
-        renderSectionHeader={isAllLoading ? undefined : renderSectionHeader}
-        stickySectionHeadersEnabled
+        renderSectionHeader={undefined}
+        stickySectionHeadersEnabled={false}
         ListHeaderComponent={HeaderHero}
         contentContainerStyle={styles.listContent}
         refreshing={refreshing}
@@ -460,7 +443,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
 
-  // Liste başlıkları
+  // Kartlar
   sectionHeader: { paddingTop: 14, paddingBottom: 6, paddingHorizontal: 2 },
   sectionTitle: {
     fontSize: 12,
@@ -468,8 +451,6 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     letterSpacing: 1,
   },
-
-  // Kartlar (dokunulmadı)
   card: {
     borderRadius: 16,
     marginBottom: 12,
@@ -491,6 +472,13 @@ const styles = StyleSheet.create({
   },
   cardHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 },
   cardName: { fontSize: 18, fontWeight: '800' },
+
+  // yeni eklenenler
+  rightCol: { alignItems: 'flex-end', gap: 6 },
+  cardCompanyUnder: { fontSize: 13, fontWeight: '600', marginTop: 2 },
+  timeUnderPill: { flexDirection: 'row', alignItems: 'center' },
+
+  // eskiler (gerekirse)
   cardCompany: { fontSize: 13, fontWeight: '600' },
   cardTime: { fontSize: 12, fontWeight: '600' },
   metaRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },

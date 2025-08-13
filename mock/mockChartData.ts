@@ -1,211 +1,165 @@
+// mock/mockChartData.ts
+
 export interface ChartData {
   labels: string[];
   values: number[];
   startTime: string;
   endTime: string;
-  freq: number; // saniye cinsinden
+  freq: number;       // saniye
   server: string;
-  sampleType: string;
+  sampleType: string; // AVG | RAW | MIN | MAX ...
 }
 
-const defaultLabels = ['10:00', '10:05', '10:10', '10:15', '10:20'];
+/* ---------------- Helpers ---------------- */
+
+const generateTimeLabels = (startISO: string, endISO: string, freqSec: number): string[] => {
+  const out: string[] = [];
+  const s = new Date(startISO).getTime();
+  const e = new Date(endISO).getTime();
+  if (!isFinite(s) || !isFinite(e) || freqSec <= 0 || s > e) return out;
+  for (let t = s; t <= e; t += freqSec * 1000) {
+    out.push(new Date(t).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }));
+  }
+  return out;
+};
+
+// Geçersiz sayıları 0 yap
+const sanitizeData = (arr: number[]): number[] => arr.map(v => (Number.isFinite(v) ? v : 0));
+
+// Daha şovlu/kıvrımlı seri üretici (deterministik)
+const makeCurvySeries = (
+  n: number,
+  base = 50,          // etrafında dalgalanacağı değer
+  amp = 20,           // genlik
+  freq = 1.4,         // kaç kıvrım
+  phase = 0           // faz kaydırma (serileri farklılaştırır)
+): number[] => {
+  const a2 = amp * 0.45;
+  const f2 = freq * 0.65;
+  return Array.from({ length: n }, (_, i) => {
+    const t = i / Math.max(1, n - 1); // 0..1
+    const v =
+      base +
+      amp * Math.sin(2 * Math.PI * (freq * t) + phase) +
+      a2 * Math.sin(2 * Math.PI * (f2 * t) + phase * 0.7);
+    return Number(v.toFixed(1));
+  });
+};
+
+/* ---------------- Defaults ---------------- */
 
 const startISO = '2025-08-08T10:00:00Z';
-const endISO = '2025-08-08T10:20:00Z';
+const endISO   = '2025-08-08T11:00:00Z'; // 1 saat → daha fazla örnek nokta
+const FREQ = 300; // 5 dk
+const defaultLabels = generateTimeLabels(startISO, endISO, FREQ);
+const N = defaultLabels.length;
 
-// Geçersiz sayıları 0 ile değiştirecek fonksiyon
-const sanitizeData = (data: number[]): number[] => {
-  return data.map((value) => (isFinite(value) ? value : 0)); // Geçersiz sayıları 0 ile değiştir
-};
+/* ---------------- Data ---------------- */
 
 export const mockChartData: Record<string, ChartData> = {
   CA_PRESSURE: {
     labels: defaultLabels,
-    values: sanitizeData([30, 32, 31, 33, 34]), // Geçersiz veri kontrolü
-    startTime: startISO,
-    endTime: endISO,
-    freq: 300,
-    server: 'Server A',
-    sampleType: 'AVG',
+    values: sanitizeData(makeCurvySeries(N, 32, 4.5, 1.6, 0.2)),
+    startTime: startISO, endTime: endISO, freq: FREQ, server: 'Server A', sampleType: 'AVG',
   },
   VCM_TEMP: {
     labels: defaultLabels,
-    values: sanitizeData([120, 122, 121, 123, 124]),
-    startTime: startISO,
-    endTime: endISO,
-    freq: 300,
-    server: 'Server B',
-    sampleType: 'RAW',
+    values: sanitizeData(makeCurvySeries(N, 121, 7.5, 1.9, 0.9)),
+    startTime: startISO, endTime: endISO, freq: FREQ, server: 'Server B', sampleType: 'RAW',
   },
   EOEG_FLOW: {
     labels: defaultLabels,
-    values: sanitizeData([15, 16, 15.5, 16.2, 16.8]),
-    startTime: startISO,
-    endTime: endISO,
-    freq: 300,
-    server: 'Server C',
-    sampleType: 'AVG',
+    values: sanitizeData(makeCurvySeries(N, 16, 2.8, 1.5, 0.4)),
+    startTime: startISO, endTime: endISO, freq: FREQ, server: 'Server C', sampleType: 'AVG',
   },
   PTA_LEVEL: {
     labels: defaultLabels,
-    values: sanitizeData([45, 47, 46.5, 48, 49]),
-    startTime: startISO,
-    endTime: endISO,
-    freq: 300,
-    server: 'Server D',
-    sampleType: 'RAW',
+    values: sanitizeData(makeCurvySeries(N, 47, 4.2, 1.4, 1.3)),
+    startTime: startISO, endTime: endISO, freq: FREQ, server: 'Server D', sampleType: 'RAW',
   },
   AYPE_T_TEMP: {
     labels: defaultLabels,
-    values: sanitizeData([110, 111, 112, 113, 114]),
-    startTime: startISO,
-    endTime: endISO,
-    freq: 300,
-    server: 'Server A',
-    sampleType: 'AVG',
+    values: sanitizeData(makeCurvySeries(N, 112, 6.0, 1.7, 0.7)),
+    startTime: startISO, endTime: endISO, freq: FREQ, server: 'Server A', sampleType: 'AVG',
   },
   PA_PRESSURE: {
     labels: defaultLabels,
-    values: sanitizeData([60, 61, 62, 63, 64]),
-    startTime: startISO,
-    endTime: endISO,
-    freq: 300,
-    server: 'Server B',
-    sampleType: 'RAW',
+    values: sanitizeData(makeCurvySeries(N, 62, 5.2, 1.5, 0.35)),
+    startTime: startISO, endTime: endISO, freq: FREQ, server: 'Server B', sampleType: 'RAW',
   },
   PP_TEMP: {
     labels: defaultLabels,
-    values: sanitizeData([100, 101, 100.5, 101.2, 102]),
-    startTime: startISO,
-    endTime: endISO,
-    freq: 300,
-    server: 'Server C',
-    sampleType: 'AVG',
+    values: sanitizeData(makeCurvySeries(N, 101, 4.0, 1.65, 1.1)),
+    startTime: startISO, endTime: endISO, freq: FREQ, server: 'Server C', sampleType: 'AVG',
   },
   YYPE_FLOW: {
     labels: defaultLabels,
-    values: sanitizeData([18, 18.2, 18.1, 18.5, 18.8]),
-    startTime: startISO,
-    endTime: endISO,
-    freq: 300,
-    server: 'Server D',
-    sampleType: 'RAW',
+    values: sanitizeData(makeCurvySeries(N, 18.3, 1.9, 1.45, 0.25)),
+    startTime: startISO, endTime: endISO, freq: FREQ, server: 'Server D', sampleType: 'RAW',
   },
   BU_EU_PRESSURE: {
     labels: defaultLabels,
-    values: sanitizeData([55, 56, 55.5, 56.2, 57]),
-    startTime: startISO,
-    endTime: endISO,
-    freq: 300,
-    server: 'Server A',
-    sampleType: 'AVG',
+    values: sanitizeData(makeCurvySeries(N, 56, 3.6, 1.55, 0.85)),
+    startTime: startISO, endTime: endISO, freq: FREQ, server: 'Server A', sampleType: 'AVG',
   },
   AGU_TEMP: {
     labels: defaultLabels,
-    values: sanitizeData([90, 91, 90.5, 92, 93]),
-    startTime: startISO,
-    endTime: endISO,
-    freq: 300,
-    server: 'Server B',
-    sampleType: 'RAW',
+    values: sanitizeData(makeCurvySeries(N, 91.5, 6.8, 2.1, 0.5)),
+    startTime: startISO, endTime: endISO, freq: FREQ, server: 'Server B', sampleType: 'RAW',
   },
   ACN_LEVEL: {
     labels: defaultLabels,
-    values: sanitizeData([70, 72, 71.5, 73, 74]),
-    startTime: startISO,
-    endTime: endISO,
-    freq: 300,
-    server: 'Server C',
-    sampleType: 'AVG',
+    values: sanitizeData(makeCurvySeries(N, 72, 4.4, 1.35, 0.6)),
+    startTime: startISO, endTime: endISO, freq: FREQ, server: 'Server C', sampleType: 'AVG',
   },
   AYPE_TEMP: {
     labels: defaultLabels,
-    values: sanitizeData([130, 131, 130.5, 132, 133]),
-    startTime: startISO,
-    endTime: endISO,
-    freq: 300,
-    server: 'Server D',
-    sampleType: 'RAW',
+    values: sanitizeData(makeCurvySeries(N, 131.5, 7.2, 1.85, 1.0)),
+    startTime: startISO, endTime: endISO, freq: FREQ, server: 'Server D', sampleType: 'RAW',
   },
   ETILEN_FLOW: {
     labels: defaultLabels,
-    values: sanitizeData([20, 20.5, 20.2, 21, 21.5]),
-    startTime: startISO,
-    endTime: endISO,
-    freq: 300,
-    server: 'Server A',
-    sampleType: 'AVG',
+    values: sanitizeData(makeCurvySeries(N, 20.8, 2.3, 1.6, 0.15)),
+    startTime: startISO, endTime: endISO, freq: FREQ, server: 'Server A', sampleType: 'AVG',
   },
   AROM_PRESSURE: {
     labels: defaultLabels,
-    values: sanitizeData([40, 41, 40.5, 42, 43]),
-    startTime: startISO,
-    endTime: endISO,
-    freq: 300,
-    server: 'Server B',
-    sampleType: 'RAW',
+    values: sanitizeData(makeCurvySeries(N, 41.5, 4.8, 1.7, 0.95)),
+    startTime: startISO, endTime: endISO, freq: FREQ, server: 'Server B', sampleType: 'RAW',
   },
   PVC_TEMP: {
     labels: defaultLabels,
-    values: sanitizeData([85, 86, 85.5, 87, 88]),
-    startTime: startISO,
-    endTime: endISO,
-    freq: 300,
-    server: 'Server C',
-    sampleType: 'AVG',
+    values: sanitizeData(makeCurvySeries(N, 86.2, 5.4, 1.9, 0.45)),
+    startTime: startISO, endTime: endISO, freq: FREQ, server: 'Server C', sampleType: 'AVG',
   },
   YN_SU_ART_FLOW: {
     labels: defaultLabels,
-    values: sanitizeData([22, 22.5, 22.2, 23, 23.5]),
-    startTime: startISO,
-    endTime: endISO,
-    freq: 300,
-    server: 'Server D',
-    sampleType: 'RAW',
+    values: sanitizeData(makeCurvySeries(N, 22.6, 2.0, 1.55, 0.75)),
+    startTime: startISO, endTime: endISO, freq: FREQ, server: 'Server D', sampleType: 'RAW',
   },
   E_SU_ART_PRESSURE: {
     labels: defaultLabels,
-    values: sanitizeData([35, 36, 35.5, 36.2, 37]),
-    startTime: startISO,
-    endTime: endISO,
-    freq: 300,
-    server: 'Server A',
-    sampleType: 'AVG',
+    values: sanitizeData(makeCurvySeries(N, 36.1, 3.1, 1.45, 0.2)),
+    startTime: startISO, endTime: endISO, freq: FREQ, server: 'Server A', sampleType: 'AVG',
   },
   UNIT100_PRESSURE: {
     labels: defaultLabels,
-    values: sanitizeData([65, 66, 65.5, 67, 68]),
-    startTime: startISO,
-    endTime: endISO,
-    freq: 300,
-    server: 'Server B',
-    sampleType: 'RAW',
+    values: sanitizeData(makeCurvySeries(N, 66.2, 5.0, 1.6, 1.2)),
+    startTime: startISO, endTime: endISO, freq: FREQ, server: 'Server B', sampleType: 'RAW',
   },
   UNIT110_TEMP: {
     labels: defaultLabels,
-    values: sanitizeData([95, 96, 95.5, 97, 98]),
-    startTime: startISO,
-    endTime: endISO,
-    freq: 300,
-    server: 'Server C',
-    sampleType: 'AVG',
+    values: sanitizeData(makeCurvySeries(N, 96.4, 5.6, 1.75, 0.3)),
+    startTime: startISO, endTime: endISO, freq: FREQ, server: 'Server C', sampleType: 'AVG',
   },
   UNIT150_LEVEL: {
     labels: defaultLabels,
-    values: sanitizeData([78, 79, 78.5, 80, 81]),
-    startTime: startISO,
-    endTime: endISO,
-    freq: 300,
-    server: 'Server D',
-    sampleType: 'RAW',
+    values: sanitizeData(makeCurvySeries(N, 79.2, 4.8, 1.5, 0.55)),
+    startTime: startISO, endTime: endISO, freq: FREQ, server: 'Server D', sampleType: 'RAW',
   },
   UNIT190_FLOW: {
     labels: defaultLabels,
-    values: sanitizeData([12, 12.2, 12.1, 12.5, 12.8]),
-    startTime: startISO,
-    endTime: endISO,
-    freq: 300,
-    server: 'Server A',
-    sampleType: 'AVG',
+    values: sanitizeData(makeCurvySeries(N, 12.6, 1.6, 1.35, 0.4)),
+    startTime: startISO, endTime: endISO, freq: FREQ, server: 'Server A', sampleType: 'AVG',
   },
 };

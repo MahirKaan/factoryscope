@@ -1,8 +1,8 @@
 // app/_layout.tsx
+import { ThemeProvider } from '@/context/ThemeContext';
+import { Stack } from 'expo-router';
 import 'react-native-gesture-handler'; // ilk import şart
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { Stack } from 'expo-router';
-import { ThemeProvider } from '@/context/ThemeContext';
 
 export default function RootLayout() {
   return (
