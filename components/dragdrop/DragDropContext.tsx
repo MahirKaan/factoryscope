@@ -1,182 +1,118 @@
 // components/dragdrop/DragDropContext.tsx
-import React, {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from 'react';
-import { LayoutRectangle } from 'react-native';
-import type { Slot, SlotId, WidgetType } from './types';
-
-/**
- * SlotState: her slot id -> Slot (widgetId dahil) map'i
- * BUNU export ediyoruz; Template2Screen bundan import ediyor.
- */
-export type SlotState = Record<SlotId, Slot>;
-
-/** ---- internal types ---- */
-type DragToken = {
-  widgetId: string;
-  from: SlotId;
-  type: WidgetType;
-};
-
-type SlotMeta = {
-  frame?: LayoutRectangle;
-  accepts?: WidgetType[];
-};
-type SlotMetaMap = Record<SlotId, SlotMeta>;
-
-type CtxValue = {
-  // data
-  slots: SlotState;
-  hoveredSlotId: SlotId | null;
-
-  // drag api
-  beginDrag: (payload: DragToken) => void;
-  updateHover: (x: number, y: number) => void;
-  finishDrag: () => void;
-  cancelDrag: () => void;
-
-  // drop-slot api
-  setSlotFrame: (slotId: SlotId, rect: LayoutRectangle) => void;
-  upsertSlotMeta: (slotId: SlotId, meta: Partial<SlotMeta>) => void;
-};
-
-const Ctx = createContext<CtxValue | null>(null);
+import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import type { DragDropContextValue, Slot, SlotId, SlotRect } from './types';
 
 type ProviderProps = {
   children: React.ReactNode;
-  /** ilk yükte slot dizisi (id/accepts/widgetId içeren)  */
+
+  // Template2Screen’den veriyoruz
   initialSlots?: Slot[];
-  /** Scroll'u kilitlemek istiyorsan dışarıya event */
+
+  // Scroll kilidi (drag sırasında)
   setScrollLocked?: (v: boolean) => void;
-  /** Slots değiştiğinde haber verme */
-  onChange?: (slots: SlotState) => void;
+
+  // Dışarıya slot değişimini bildirmek için
+  onChange?: (slots: Partial<Record<SlotId, Slot>> | null) => void;
 };
 
-export const DragDropProvider: React.FC<ProviderProps> = ({
-  children,
-  initialSlots = [],
-  setScrollLocked: _setScrollLocked,
-  onChange,
-}) => {
-  const [slots, setSlots] = useState<SlotState>(() => {
-    const map: SlotState = {} as SlotState;
-    initialSlots.forEach((s) => (map[s.id] = { ...s }));
-    return map;
-  });
+const DragDropContext = createContext<DragDropContextValue>({
+  slots: null,
+  hoveredSlotId: null,
+  registerSlot: () => {},
+  updateHover: () => {},
+  cancelDrag: () => {},
+});
 
-  // DropSlot ölçümleri
-  const slotMetaRef = useRef<SlotMetaMap>({});
+export function DragDropProvider({ children, initialSlots, setScrollLocked, onChange }: ProviderProps) {
+  // Sadece Slot map’i (rect’ler ayrı tutulur)
+  const [slotMap, setSlotMap] = useState<Partial<Record<SlotId, Slot>> | null>(null);
 
-  // drag state
-  const dragRef = useRef<DragToken | null>(null);
+  // Slot’ların ekran rect’leri (hover hesaplamak için)
+  const rectMapRef = useRef<Partial<Record<SlotId, SlotRect>>>({});
+
   const [hoveredSlotId, setHoveredSlotId] = useState<SlotId | null>(null);
 
-  /** dışarıya onChange */
+  // İlk slotları yerleştir
   useEffect(() => {
-    onChange?.(slots);
-  }, [slots, onChange]);
-
-  /** kullanışlı yardımcılar */
-  const pointInRect = (x: number, y: number, r?: LayoutRectangle) =>
-    !!r && x >= r.x && x <= r.x + r.width && y >= r.y && y <= r.y + r.height;
-
-  /** drag api */
-  const beginDrag = useCallback((payload: DragToken) => {
-    dragRef.current = payload;
-    _setScrollLocked?.(true);
-  }, [_setScrollLocked]);
-
-  const updateHover = useCallback((x: number, y: number) => {
-    // hangi frame'in üstündeyiz?
-    let next: SlotId | null = null;
-    const meta = slotMetaRef.current;
-    for (const sid in meta) {
-      const fr = meta[sid].frame;
-      if (pointInRect(x, y, fr)) {
-        next = sid as SlotId;
-        break;
-      }
+    if (!initialSlots || !initialSlots.length) {
+      setSlotMap(null);
+      return;
     }
-    setHoveredSlotId(next);
-  }, []);
-
-  const finishDrag = useCallback(() => {
-    const drag = dragRef.current;
-    if (!drag) return;
-    _setScrollLocked?.(false);
-
-    setSlots((prev) => {
-      // hiçbir şeyin üstüne bırakılmadıysa değişiklik yok
-      if (!hoveredSlotId || hoveredSlotId === drag.from) return prev;
-
-      // kabul kontrolü (accepts)
-      const meta = slotMetaRef.current;
-      const accepts = meta[hoveredSlotId]?.accepts;
-      if (accepts && !accepts.includes(drag.type)) return prev;
-
-      // SWAP mantığı
-      const fromSlot = prev[drag.from];
-      const toSlot = prev[hoveredSlotId];
-      if (!fromSlot || !toSlot) return prev;
-
-      const next: SlotState = { ...prev, [drag.from]: { ...fromSlot }, [hoveredSlotId]: { ...toSlot } };
-      const tmp = next[hoveredSlotId].widgetId;
-      next[hoveredSlotId].widgetId = drag.widgetId;
-      next[drag.from].widgetId = tmp; // toSlot boşsa undefined olur, “taşıma” gibi davranır
-
-      return next;
+    const next: Partial<Record<SlotId, Slot>> = {};
+    initialSlots.forEach((s) => {
+      next[s.id] = { ...s };
     });
+    setSlotMap(next);
+    onChange?.(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialSlots]);
 
-    dragRef.current = null;
+  // DropZone’dan kayıt/güncelleme
+  const registerSlot = (id: SlotId, slot: Slot, rect: SlotRect) => {
+    // slot bilgisi değişmiş mi?
+    setSlotMap((prev) => {
+      const cur = prev ? { ...prev } : {};
+      const before = cur[id];
+      const changed =
+        !before ||
+        before.widgetId !== slot.widgetId ||
+        before.accepts !== slot.accepts; // referans değişimi bile update sebebi olabilir
+
+      if (changed) {
+        cur[id] = { ...slot };
+      }
+      // rect’i internal map’te tut
+      const prevRect = rectMapRef.current[id];
+      const rectChanged =
+        !prevRect ||
+        Math.abs(prevRect.x - rect.x) > 0.5 ||
+        Math.abs(prevRect.y - rect.y) > 0.5 ||
+        Math.abs(prevRect.width - rect.width) > 0.5 ||
+        Math.abs(prevRect.height - rect.height) > 0.5;
+
+      if (rectChanged) {
+        rectMapRef.current[id] = rect;
+      }
+
+      if (changed) {
+        onChange?.(cur);
+        return cur;
+      }
+      return prev ?? cur;
+    });
+  };
+
+  const updateHover = (absX: number, absY: number) => {
+    // Hangi rect içindeyiz?
+    let hit: SlotId | null = null;
+    const rectMap = rectMapRef.current;
+    const keys = Object.keys(rectMap) as SlotId[];
+    for (let i = 0; i < keys.length; i++) {
+      const k = keys[i];
+      const r = rectMap[k];
+      if (!r) continue;
+      const inside = absX >= r.x && absX <= r.x + r.width && absY >= r.y && absY <= r.y + r.height;
+      if (inside) { hit = k; break; }
+    }
+    if (hit !== hoveredSlotId) {
+      setHoveredSlotId(hit);
+    }
+  };
+
+  const cancelDrag = () => {
     setHoveredSlotId(null);
-  }, [_setScrollLocked, hoveredSlotId]);
+    setScrollLocked?.(false);
+  };
 
-  const cancelDrag = useCallback(() => {
-    dragRef.current = null;
-    setHoveredSlotId(null);
-    _setScrollLocked?.(false);
-  }, [_setScrollLocked]);
+  const value = useMemo<DragDropContextValue>(() => ({
+    slots: slotMap,
+    hoveredSlotId,
+    registerSlot,
+    updateHover,
+    cancelDrag,
+  }), [slotMap, hoveredSlotId]);
 
-  /** drop-slot api */
-  const setSlotFrame = useCallback((slotId: SlotId, rect: LayoutRectangle) => {
-    slotMetaRef.current[slotId] = {
-      ...(slotMetaRef.current[slotId] ?? {}),
-      frame: rect,
-    };
-  }, []);
+  return <DragDropContext.Provider value={value}>{children}</DragDropContext.Provider>;
+}
 
-  const upsertSlotMeta = useCallback((slotId: SlotId, meta: Partial<SlotMeta>) => {
-    slotMetaRef.current[slotId] = {
-      ...(slotMetaRef.current[slotId] ?? {}),
-      ...meta,
-    };
-  }, []);
-
-  const value = useMemo<CtxValue>(
-    () => ({
-      slots,
-      hoveredSlotId,
-      beginDrag,
-      updateHover,
-      finishDrag,
-      cancelDrag,
-      setSlotFrame,
-      upsertSlotMeta,
-    }),
-    [slots, hoveredSlotId, beginDrag, updateHover, finishDrag, cancelDrag, setSlotFrame, upsertSlotMeta]
-  );
-
-  return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
-};
-
-export const useDragDrop = () => {
-  const v = useContext(Ctx);
-  if (!v) throw new Error('useDragDrop must be used inside DragDropProvider');
-  return v;
-};
+export const useDragDrop = () => useContext(DragDropContext);

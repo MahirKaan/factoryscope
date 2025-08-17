@@ -1,35 +1,41 @@
-// components/ChartSettingsModal.tsx
-import React, { useMemo, useState } from 'react';
-import { FlatList, Modal, Pressable, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import DateTimePickerModal from 'react-native-modal-datetime-picker';
+// ChartSettingsModal.tsx
 
-type TagOption = { name: string };
+import DateTimePicker from "@react-native-community/datetimepicker";
+import { useState } from "react";
+import {
+    Modal,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
+} from "react-native";
 
 type Props = {
   visible: boolean;
   onClose: () => void;
-  onApply: (payload: {
+  onApply: (data: {
+    startTime: string | null;
+    endTime: string | null;
+    sampleType: string | null;
+    freq: number | null;
     tags: string[];
-    startTime: string;
-    endTime: string;
-    freq: number;
-    sampleType: string;
   }) => void;
-  tagOptions: TagOption[];
-
-  /** Edit modunda mevcut değerleri doldurur */
-  editData: null | {
+  tagOptions: string[];
+  editData?: {
+    startTime: string | null;
+    endTime: string | null;
+    sampleType: string | null;
+    freq: number | null;
     tags: string[];
-    startTime: string;
-    endTime: string;
-    freq: number;
-    sampleType: string;
   };
-  editChartIndex: number | null; // kullanılmıyor ama imza korunuyor
+  editChartIndex?: number | null;  // 🔥 burayı ekledik
 };
 
-const FREQS = [300, 600, 900, 1800, 3600];
-const SAMPLE_TYPES = ['AVG', 'MIN', 'MAX', 'RAW'] as const;
+
+const freqOptions = [300, 600, 900, 1800, 3600];
+const sampleTypes = ["avg", "min", "max", "sum", "last"];
 
 export default function ChartSettingsModal({
   visible,
@@ -38,213 +44,410 @@ export default function ChartSettingsModal({
   tagOptions,
   editData,
 }: Props) {
-  const [query, setQuery] = useState('');
+  const [search, setSearch] = useState("");
   const [selectedTags, setSelectedTags] = useState<string[]>(editData?.tags ?? []);
-  const [startTime, setStartTime] = useState<string>(editData?.startTime ?? new Date().toISOString());
-  const [endTime, setEndTime] = useState<string>(editData?.endTime ?? new Date(Date.now() + 60 * 60 * 1000).toISOString());
-  const [freq, setFreq] = useState<number>(editData?.freq ?? 300);
-  const [sampleType, setSampleType] = useState<string>(editData?.sampleType ?? 'AVG');
-
-  const [picker, setPicker] = useState<{ which: 'start' | 'end' | null }>({ which: null });
-
-  React.useEffect(() => {
-    if (editData) {
-      setSelectedTags(editData.tags);
-      setStartTime(editData.startTime);
-      setEndTime(editData.endTime);
-      setFreq(editData.freq);
-      setSampleType(editData.sampleType);
-    } else if (visible) {
-      // yeni açıldıysa reset
-      setSelectedTags([]);
-      setQuery('');
-      setStartTime(new Date().toISOString());
-      setEndTime(new Date(Date.now() + 60 * 60 * 1000).toISOString());
-      setFreq(300);
-      setSampleType('AVG');
-    }
-  }, [visible, editData]);
-
-  const filtered = useMemo(
-    () => tagOptions.filter(t => t.name.toLowerCase().includes(query.toLowerCase())),
-    [tagOptions, query]
+  const [startTime, setStartTime] = useState<Date | null>(
+    editData?.startTime ? new Date(editData.startTime) : null
   );
+  const [endTime, setEndTime] = useState<Date | null>(
+    editData?.endTime ? new Date(editData.endTime) : null
+  );
+  const [sampleType, setSampleType] = useState<string | null>(
+    editData?.sampleType ?? null
+  );
+  const [freq, setFreq] = useState<number | null>(editData?.freq ?? null);
+  const [quickSelect, setQuickSelect] = useState<"1h" | "24h" | null>(null);
 
-  const toggleTag = (name: string) => {
-    setSelectedTags((prev) => prev.includes(name) ? prev.filter(t => t !== name) : [...prev, name]);
+  const [showPicker, setShowPicker] = useState<{
+    mode: "date" | "time";
+    target: "start" | "end" | null;
+  }>({ mode: "date", target: null });
+
+  const [tempDate, setTempDate] = useState<Date | null>(null);
+
+  const formatDate = (date: Date | null) => {
+    if (!date) return "";
+    return `${date.getDate().toString().padStart(2, "0")}.${(date.getMonth() + 1)
+      .toString()
+      .padStart(2, "0")}.${date.getFullYear()} ${date
+      .getHours()
+      .toString()
+      .padStart(2, "0")}:${date.getMinutes().toString().padStart(2, "0")}`;
+  };
+
+  const toggleTag = (tag: string) => {
+    if (selectedTags.includes(tag)) {
+      setSelectedTags(selectedTags.filter((t) => t !== tag));
+    } else {
+      setSelectedTags([tag, ...selectedTags]);
+    }
+  };
+
+  const handleDateChange = (_: any, date?: Date) => {
+    if (date) {
+      setTempDate(date);
+      setShowPicker((prev) => ({ ...prev, mode: "time" }));
+    } else {
+      setShowPicker({ mode: "date", target: null });
+    }
+  };
+
+  const handleTimeChange = (_: any, time?: Date) => {
+    if (time && tempDate) {
+      const finalDate = new Date(tempDate);
+      finalDate.setHours(time.getHours());
+      finalDate.setMinutes(time.getMinutes());
+
+      if (showPicker.target === "start") {
+        setStartTime(finalDate);
+      } else if (showPicker.target === "end") {
+        setEndTime(finalDate);
+      }
+    }
+    setShowPicker({ mode: "date", target: null });
+    setTempDate(null);
   };
 
   const apply = () => {
-    const s = new Date(startTime); const e = new Date(endTime);
-    if (!selectedTags.length) return alert('En az bir tag seçin.');
-    if (isNaN(s.getTime()) || isNaN(e.getTime())) return alert('Başlangıç/Bitiş zamanı geçersiz.');
-    if (s > e) return alert('Başlangıç tarihi, bitişten büyük olamaz.');
-    if (freq <= 0) return alert('Frequency 0 dan büyük olmalı.');
-    onApply({ tags: selectedTags, startTime, endTime, freq, sampleType });
+    onApply({
+      startTime: startTime ? startTime.toISOString() : null,
+      endTime: endTime ? endTime.toISOString() : null,
+      sampleType,
+      freq,
+      tags: selectedTags,
+    });
+    onClose();
   };
 
+  const filteredTags = [
+    ...selectedTags,
+    ...tagOptions.filter(
+      (tag) =>
+        !selectedTags.includes(tag) &&
+        tag.toLowerCase().includes(search.toLowerCase())
+    ),
+  ];
+
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <View style={styles.backdrop}>
-        <View style={styles.sheet}>
-          <Text style={styles.title}>{editData ? 'Grafiği Düzenle' : 'Yeni Grafik'}</Text>
+    <Modal visible={visible} animationType="slide" transparent>
+      <View style={styles.overlay}>
+        <View style={styles.container}>
+          <Text style={styles.title}>Grafik Ayarları</Text>
+          <View style={styles.divider} />
 
-          {/* TAG SEARCH */}
-          <Text style={styles.label}>Tag Seç</Text>
-          <View style={styles.searchBox}>
-            <TextInput
-              value={query}
-              onChangeText={setQuery}
-              placeholder="CA_PRESSURE, VCM_TEMP..."
-              placeholderTextColor="#7F8DA0"
-              style={styles.searchInput}
-            />
-          </View>
-
-          <FlatList
-            data={filtered}
-            keyExtractor={(it) => it.name}
-            style={{ maxHeight: 140 }}
-            renderItem={({ item }) => (
-              <Pressable onPress={() => toggleTag(item.name)} style={[styles.tagRow, selectedTags.includes(item.name) && styles.tagRowActive]}>
-                <Text style={styles.tagName}>{item.name}</Text>
-                <Text style={styles.tagCheck}>{selectedTags.includes(item.name) ? '✓' : '+'}</Text>
-              </Pressable>
+          <ScrollView style={{ maxHeight: "80%" }}>
+            {/* Selected tags as chips */}
+            {selectedTags.length > 0 && (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                style={{ marginBottom: 10 }}
+              >
+                {selectedTags.map((tag) => (
+                  <View key={tag} style={styles.chip}>
+                    <Text style={styles.chipText}>{tag}</Text>
+                  </View>
+                ))}
+              </ScrollView>
             )}
-          />
 
-          {/* SELECTED TAGS */}
-          <View style={styles.selectedWrap}>
-            {selectedTags.map((t) => (
-              <View key={t} style={styles.selectedChip}>
-                <Text style={styles.selectedChipText}>{t}</Text>
-                <Pressable onPress={() => toggleTag(t)}>
-                  <Text style={styles.removeX}>×</Text>
-                </Pressable>
-              </View>
-            ))}
-          </View>
+            {/* Tag Search */}
+            <TextInput
+              style={styles.input}
+              placeholder="Tag ara..."
+              placeholderTextColor="#94a3b8"
+              value={search}
+              onChangeText={setSearch}
+            />
 
-          {/* TIME */}
-          <View style={styles.row}>
-            <View style={{ flex: 1, marginRight: 8 }}>
-              <Text style={styles.label}>Başlangıç</Text>
-              <TouchableOpacity style={styles.timeBtn} onPress={() => setPicker({ which: 'start' })}>
-                <Text style={styles.timeText}>{new Date(startTime).toLocaleString()}</Text>
-              </TouchableOpacity>
+            {/* Tag List */}
+            <View style={{ maxHeight: 100, marginBottom: 14 }}>
+              <ScrollView>
+                {filteredTags.map((tag) => (
+                  <TouchableOpacity
+                    key={tag}
+                    onPress={() => toggleTag(tag)}
+                    style={[
+                      styles.tagRow,
+                      selectedTags.includes(tag) && styles.tagRowSelected,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.tagText,
+                        selectedTags.includes(tag) && styles.tagTextSelected,
+                      ]}
+                    >
+                      {tag}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
             </View>
-            <View style={{ flex: 1, marginLeft: 8 }}>
-              <Text style={styles.label}>Bitiş</Text>
-              <TouchableOpacity style={styles.timeBtn} onPress={() => setPicker({ which: 'end' })}>
-                <Text style={styles.timeText}>{new Date(endTime).toLocaleString()}</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
 
-          {/* FREQ */}
-          <Text style={[styles.label, { marginTop: 12 }]}>Frequency (s)</Text>
-          <View style={styles.chipsRow}>
-            {FREQS.map((f) => (
-              <Pressable key={f} style={[styles.chip, freq === f && styles.chipActive]} onPress={() => setFreq(f)}>
-                <Text style={[styles.chipText, freq === f && styles.chipTextActive]}>{f}</Text>
-              </Pressable>
-            ))}
-          </View>
-
-          {/* SAMPLE TYPE */}
-          <Text style={[styles.label, { marginTop: 12 }]}>Sample Type</Text>
-          <View style={styles.chipsRow}>
-            {SAMPLE_TYPES.map((s) => (
-              <Pressable key={s} style={[styles.chip, sampleType === s && styles.chipActive]} onPress={() => setSampleType(s)}>
-                <Text style={[styles.chipText, sampleType === s && styles.chipTextActive]}>{s}</Text>
-              </Pressable>
-            ))}
-          </View>
-
-          {/* ACTIONS */}
-          <View style={styles.actions}>
-            <TouchableOpacity style={[styles.btn, styles.btnGhost]} onPress={onClose}>
-              <Text style={styles.btnGhostText}>İptal</Text>
+            {/* Start & End Time */}
+            <Text style={styles.sectionLabel}>Başlangıç Zamanı</Text>
+            <TouchableOpacity
+              style={styles.input}
+              onPress={() => setShowPicker({ mode: "date", target: "start" })}
+            >
+              <Text style={{ color: startTime ? "white" : "#94a3b8" }}>
+                {startTime ? formatDate(startTime) : "Seçiniz"}
+              </Text>
             </TouchableOpacity>
-            <TouchableOpacity style={[styles.btn, styles.btnPrimary]} onPress={apply}>
-              <Text style={styles.btnPrimaryText}>{editData ? 'Kaydet' : 'Ekle'}</Text>
+
+            <Text style={styles.sectionLabel}>Bitiş Zamanı</Text>
+            <TouchableOpacity
+              style={styles.input}
+              onPress={() => setShowPicker({ mode: "date", target: "end" })}
+            >
+              <Text style={{ color: endTime ? "white" : "#94a3b8" }}>
+                {endTime ? formatDate(endTime) : "Seçiniz"}
+              </Text>
+            </TouchableOpacity>
+
+            {/* Quick select */}
+            <View style={styles.row}>
+              <TouchableOpacity
+                style={[
+                  styles.quickBtn,
+                  quickSelect === "1h" && styles.quickBtnActive,
+                ]}
+                onPress={() => {
+                  setEndTime(new Date());
+                  setStartTime(new Date(Date.now() - 60 * 60 * 1000));
+                  setQuickSelect("1h");
+                }}
+              >
+                <Text style={styles.quickBtnText}>Son 1 Saat</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.quickBtn,
+                  quickSelect === "24h" && styles.quickBtnActive,
+                ]}
+                onPress={() => {
+                  setEndTime(new Date());
+                  setStartTime(new Date(Date.now() - 24 * 60 * 60 * 1000));
+                  setQuickSelect("24h");
+                }}
+              >
+                <Text style={styles.quickBtnText}>Son 24 Saat</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Frequency */}
+            <Text style={styles.sectionLabel}>Frekans (saniye)</Text>
+            <View style={styles.rowWrap}>
+              {freqOptions.map((f) => (
+                <TouchableOpacity
+                  key={f}
+                  style={[styles.optionBtn, freq === f && styles.optionBtnActive]}
+                  onPress={() => setFreq(f)}
+                >
+                  <Text
+                    style={[
+                      styles.optionBtnText,
+                      freq === f && styles.optionBtnTextActive,
+                    ]}
+                  >
+                    {f}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            {/* Sample Type */}
+            <Text style={styles.sectionLabel}>Sample Type</Text>
+            <View style={styles.rowWrap}>
+              {sampleTypes.map((t) => (
+                <TouchableOpacity
+                  key={t}
+                  style={[
+                    styles.optionBtn,
+                    sampleType === t && styles.optionBtnActive,
+                  ]}
+                  onPress={() => setSampleType(t)}
+                >
+                  <Text
+                    style={[
+                      styles.optionBtnText,
+                      sampleType === t && styles.optionBtnTextActive,
+                    ]}
+                  >
+                    {t}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </ScrollView>
+
+          {/* Footer */}
+          <View style={styles.footer}>
+            <TouchableOpacity style={styles.cancelBtn} onPress={onClose}>
+              <Text style={{ color: "white", fontWeight: "600" }}>İptal</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.saveBtn} onPress={apply}>
+              <Text style={{ color: "white", fontWeight: "600" }}>Kaydet</Text>
             </TouchableOpacity>
           </View>
         </View>
       </View>
 
-      {/* DateTime Pickers */}
-      <DateTimePickerModal
-        isVisible={picker.which === 'start'}
-        mode="datetime"
-        date={new Date(startTime)}
-        onConfirm={(d) => { setStartTime(d.toISOString()); setPicker({ which: null }); }}
-        onCancel={() => setPicker({ which: null })}
-      />
-      <DateTimePickerModal
-        isVisible={picker.which === 'end'}
-        mode="datetime"
-        date={new Date(endTime)}
-        onConfirm={(d) => { setEndTime(d.toISOString()); setPicker({ which: null }); }}
-        onCancel={() => setPicker({ which: null })}
-      />
+      {showPicker.target && (
+        <DateTimePicker
+          value={new Date()}
+          mode={showPicker.mode}
+          display="default"
+          themeVariant="dark"
+          onChange={
+            showPicker.mode === "date" ? handleDateChange : handleTimeChange
+          }
+        />
+      )}
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
-  backdrop: {
+  overlay: {
     flex: 1,
-    backgroundColor: 'rgba(3,7,18,0.75)',
-    justifyContent: 'center',
-    padding: 16,
+    backgroundColor: "rgba(0,0,0,0.6)",
+    justifyContent: "center",
+    padding: 12,
   },
-  sheet: {
-    backgroundColor: 'rgba(8,14,35,0.95)',
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: 'rgba(96,165,250,0.35)',
+  container: {
+    backgroundColor: "#0f172a",
+    borderRadius: 16,
     padding: 14,
+    maxHeight: "90%",
+    elevation: 6,
   },
-  title: { color: '#E0F2FE', fontSize: 18, fontWeight: '800', marginBottom: 8 },
-  label: { color: '#93C5FD', fontSize: 12, fontWeight: '700', marginBottom: 6 },
-  searchBox: {
-    borderWidth: 1, borderColor: 'rgba(148,163,184,0.25)', borderRadius: 12, marginBottom: 8, paddingHorizontal: 10, paddingVertical: 8, backgroundColor: 'rgba(2,6,23,0.6)',
+  title: {
+    fontSize: 18,
+    fontWeight: "700",
+    marginBottom: 8,
+    color: "#e2e8f0",
+    textAlign: "center",
   },
-  searchInput: { color: '#E5E7EB', fontSize: 14 },
+  divider: {
+    height: 1,
+    backgroundColor: "#1e293b",
+    marginBottom: 10,
+  },
+  input: {
+    borderWidth: 1,
+    borderColor: "#334155",
+    borderRadius: 10,
+    padding: 10,
+    marginBottom: 12,
+    color: "white",
+    backgroundColor: "#1e293b",
+  },
   tagRow: {
-    paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10,
-    borderWidth: 1, borderColor: 'rgba(148,163,184,0.2)', marginBottom: 6, backgroundColor: 'rgba(2,6,23,0.6)',
-    flexDirection: 'row', alignItems: 'center',
+    borderBottomWidth: 1,
+    borderColor: "#334155",
+    paddingVertical: 8,
+    paddingHorizontal: 6,
   },
-  tagRowActive: { borderColor: 'rgba(96,165,250,0.6)', backgroundColor: 'rgba(15,23,42,0.9)' },
-  tagName: { color: '#E5E7EB', flex: 1, fontWeight: '600' },
-  tagCheck: { color: '#93C5FD', fontWeight: '900' },
-  selectedWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginVertical: 6 },
-  selectedChip: {
-    flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 12,
-    backgroundColor: 'rgba(96,165,250,0.18)', borderWidth: 1, borderColor: 'rgba(96,165,250,0.35)'
+  tagRowSelected: {
+    backgroundColor: "#1e293b",
   },
-  selectedChipText: { color: '#E0F2FE', fontWeight: '700' },
-  removeX: { color: '#94A3B8', fontSize: 16, marginLeft: 2 },
-  row: { flexDirection: 'row', marginTop: 8 },
-  timeBtn: {
-    paddingHorizontal: 12, paddingVertical: 12, borderRadius: 12,
-    backgroundColor: 'rgba(2,6,23,0.6)', borderWidth: 1, borderColor: 'rgba(148,163,184,0.25)',
+  tagText: {
+    color: "#e2e8f0",
+    fontSize: 14,
   },
-  timeText: { color: '#E5E7EB', fontSize: 13 },
-  chipsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  tagTextSelected: {
+    color: "#38bdf8",
+    fontWeight: "600",
+  },
   chip: {
-    paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12,
-    borderWidth: 1, borderColor: 'rgba(148,163,184,0.25)', backgroundColor: 'rgba(2,6,23,0.6)',
+    backgroundColor: "#1d4ed8",
+    borderRadius: 20,
+    paddingVertical: 5,
+    paddingHorizontal: 12,
+    marginRight: 6,
+    elevation: 3,
   },
-  chipActive: { borderColor: 'rgba(96,165,250,0.8)', backgroundColor: 'rgba(15,23,42,0.9)' },
-  chipText: { color: '#CBD5E1', fontWeight: '700' },
-  chipTextActive: { color: '#E0F2FE' },
-  actions: { flexDirection: 'row', gap: 10, marginTop: 16, justifyContent: 'flex-end' },
-  btn: { paddingHorizontal: 16, paddingVertical: 12, borderRadius: 12 },
-  btnGhost: { backgroundColor: 'rgba(2,6,23,0.6)', borderWidth: 1, borderColor: 'rgba(148,163,184,0.25)' },
-  btnGhostText: { color: '#E5E7EB', fontWeight: '700' },
-  btnPrimary: { backgroundColor: '#60A5FA' },
-  btnPrimaryText: { color: '#0B1120', fontWeight: '900' },
+  chipText: {
+    color: "white",
+    fontSize: 13,
+    fontWeight: "600",
+  },
+  sectionLabel: {
+    marginBottom: 6,
+    color: "#cbd5e1",
+    fontWeight: "500",
+    fontSize: 13,
+  },
+  row: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginVertical: 8,
+  },
+  rowWrap: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    marginBottom: 12,
+  },
+  quickBtn: {
+    flex: 1,
+    backgroundColor: "#334155",
+    padding: 10,
+    borderRadius: 8,
+    marginHorizontal: 4,
+    alignItems: "center",
+  },
+  quickBtnActive: {
+    backgroundColor: "#2563eb",
+    elevation: 4,
+  },
+  quickBtnText: {
+    color: "white",
+    fontWeight: "600",
+  },
+  optionBtn: {
+    backgroundColor: "#334155",
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 8,
+    margin: 4,
+  },
+  optionBtnActive: {
+    backgroundColor: "#2563eb",
+    elevation: 3,
+  },
+  optionBtnText: {
+    color: "#cbd5e1",
+    fontWeight: "500",
+  },
+  optionBtnTextActive: {
+    color: "white",
+    fontWeight: "600",
+  },
+  
+    footer: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginTop: 12,
+  },
+  cancelBtn: {
+    flex: 1,
+    backgroundColor: "#475569", // koyu gri
+    borderRadius: 10,
+    padding: 12,
+    alignItems: "center",
+    marginRight: 6,
+    elevation: 2,
+  },
+  saveBtn: {
+    flex: 1,
+    backgroundColor: "#2563eb", // kurumsal mavi
+    borderRadius: 10,
+    padding: 12,
+    alignItems: "center",
+    marginLeft: 6,
+    elevation: 3,
+  },
+
 });

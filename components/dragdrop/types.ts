@@ -1,16 +1,34 @@
-export type SlotId = string; // "lv1", "chart1" gibi
-export type WidgetType = 'lastValue' | 'chart';
+// components/dragdrop/types.ts
+export type LVSlotId = 'lv1' | 'lv2' | 'lv3' | 'lv4';
+export type SlotId = LVSlotId;
 
-export type Widget = {
-  id: string;        // "lastValue:AYP1-TTMP" gibi benzersiz
-  type: WidgetType;
-};
+// Kabul edilen widget tipleri
+export type AcceptKind = 'lastValue';
 
-export type Frame = { x: number; y: number; width: number; height: number };
-
+// Drop alanı tanımı
 export type Slot = {
   id: SlotId;
-  accepts: WidgetType[];     // ['lastValue'] veya ['chart']
-  widgetId: string | null;   // bu slota yerleşmiş widget
-  frame?: Frame;             // drop için ölçüler
+  accepts: AcceptKind[];
+  widgetId?: string; // örn: "lastValue:lv1"
+};
+
+// Ekran koordinatları (absolute)
+export type SlotRect = { x: number; y: number; width: number; height: number };
+
+// Context’in dışarı verdiği API
+export type DragDropContextValue = {
+  // Sadece slot bilgileri (rect’ler internal)
+  slots: Partial<Record<SlotId, Slot>> | null;
+
+  // Hover edilen slot (drag sırasında)
+  hoveredSlotId: SlotId | null;
+
+  // DropZone’lar kayıt/ölçüm güncellemesi yapar
+  registerSlot: (id: SlotId, slot: Slot, rect: SlotRect) => void;
+
+  // LV kartını sürüklerken çağırıp hover slot’u hesaplar
+  updateHover: (absX: number, absY: number) => void;
+
+  // Drag bitti/iptal → hover temizle
+  cancelDrag: () => void;
 };

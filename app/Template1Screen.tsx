@@ -5,14 +5,14 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useRef, useState } from 'react';
 import {
-  Alert,
-  Animated,
-  LayoutRectangle,
-  Pressable,
-  StyleSheet,
-  Text,
-  View,
-  ViewStyle
+    Alert,
+    Animated,
+    LayoutRectangle,
+    Pressable,
+    StyleSheet,
+    Text,
+    View,
+    ViewStyle,
 } from 'react-native';
 
 import DraggableResizableChart from '../components/charts/DraggableResizableChart';
@@ -298,7 +298,7 @@ export default function Template1Screen() {
         contentContainerStyle={[styles.scrollContainer, { paddingTop: HEADER_EXPANDED + 8 }]}
         onScroll={Animated.event(
           [{ nativeEvent: { contentOffset: { y: scrollY } } }],
-          { useNativeDriver: false } // ✔ JS driver: fontSize/height animasyonları için
+          { useNativeDriver: false }
         )}
         scrollEventThrottle={16}
       >
@@ -374,15 +374,16 @@ export default function Template1Screen() {
         visible={modalVisible}
         onClose={() => setModalVisible(false)}
         onApply={(payload)=>handleApplySettings(payload, editDraft.cfg?.id)}
-        tagOptions={Object.keys(mockChartData).map((t)=>({ name:t }))}
-        editData={editDraft.cfg ? {
-          tags: editDraft.cfg.tags,
-          startTime: editDraft.cfg.startTime,
-          endTime: editDraft.cfg.endTime,
-          freq: editDraft.cfg.freq,
-          sampleType: editDraft.cfg.sampleType,
-        } : null}
-        editChartIndex={null}
+        tagOptions={Object.keys(mockChartData)}
+        editData={
+          editDraft?.cfg ? {
+            tags: editDraft.cfg.tags,
+            startTime: editDraft.cfg.startTime,
+            endTime: editDraft.cfg.endTime,
+            freq: editDraft.cfg.freq,
+            sampleType: editDraft.cfg.sampleType,
+          } : undefined
+        }
       />
 
       {/* Save Modal */}

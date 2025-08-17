@@ -6,7 +6,7 @@
     "scheme": "factorypulse",
     "splash": {
       "image": "./assets/splash.png",
-      "resizeMode": "cover",
+      "resizeMode": "contain",
       "backgroundColor": "#0f2027"
     },
     "android": {

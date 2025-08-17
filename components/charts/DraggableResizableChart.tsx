@@ -5,12 +5,11 @@ import {
   GestureResponderEvent,
   PanResponder,
   PanResponderGestureState,
-  Pressable,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
-  ViewStyle,
+  ViewStyle
 } from 'react-native';
 import { LineChart } from 'react-native-gifted-charts';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -18,8 +17,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 type Dataset = { data: number[]; color: () => string };
 type Mode = 'floating' | 'docked' | 'free';
 type Variant = 'card' | 'fill';
-
-type VisualScale = 'auto' | 'raw' | 'minmax'; // ← yeni
+type VisualScale = 'auto' | 'raw' | 'minmax';
 
 interface Props {
   data: Dataset[];
@@ -27,31 +25,22 @@ interface Props {
   tags: string[];
   sampleType: string;
   freq: number;
-
   onDelete: () => void;
-
   mode?: Mode;
   initialPosition?: { x: number; y: number };
-
   onDropGesture?: (g: { absX: number; absY: number }) => Promise<'slot1' | 'slot2' | null>;
   onDrop?: (zoneId: 'slot1' | 'slot2') => void;
   onDraggingChange?: (dragging: boolean) => void;
   onDragMove?: (g: { absX: number; absY: number }) => void;
-
   idealHeight?: number;
   variant?: Variant;
   onRequestUndock?: () => void;
-
   compact?: boolean;
   pinchEnabledInDocked?: boolean;
-
   curved?: boolean;
-
   onHeightChange?: (h: number) => void;
   persistKey?: string;
-
-  /** Çoklu seride çizgilerin kesişerek daha show görünmesi için görsel ölçek */
-  visualScale?: VisualScale; // default: 'auto' (çoklu seride minmax)
+  visualScale?: VisualScale; // default: 'auto'
 }
 
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
@@ -59,11 +48,8 @@ const MIN_H = 120;
 const MAX_H = 560;
 const MIN_W = 220;
 
-/* Daha yakın çizgi aralığı */
 const MIN_SPACING = 6;
 const SPACING_TIGHT_FACTOR = 0.75;
-
-// Kart padding’i
 const CARD_PAD = 10;
 const CARD_HPAD_TOTAL = CARD_PAD * 2;
 
@@ -72,11 +58,10 @@ const TOKENS = {
   stroke: '#253349',
   textSecondary: '#B8C7E6',
   chipTextOnColor: '#0B1120',
-  tooltipBg: 'rgba(2,6,23,0.92)',
-  tooltipStroke: 'rgba(147,197,253,0.35)',
+  tooltipBg: 'rgba(15,23,42,0.95)',
+  tooltipStroke: '#64748b',
 };
 
-// iki dokunuş arası mesafe
 const pinchDistance = (touches: readonly any[]) => {
   if (!touches || touches.length < 2) return 0;
   const [a, b] = touches as any[];
@@ -100,7 +85,6 @@ export default function DraggableResizableChart({
   visualScale = 'auto',
 }: Props) {
   const insets = useSafeAreaInsets();
-
   const isFloating = mode === 'floating' || mode === 'free';
   const isDocked = mode === 'docked';
 
@@ -111,7 +95,6 @@ export default function DraggableResizableChart({
 
   const [winW, setWinW] = useState(Dimensions.get('window').width);
   const [maxW, setMaxW] = useState<number>(computeMaxW(winW));
-
   const computeInitialFloatingW = (w: number) => {
     const safe = computeMaxW(w);
     let ratio = 0.84;
@@ -125,7 +108,6 @@ export default function DraggableResizableChart({
   const [chartH, setChartH] = useState<number>(compact ? 160 : 280);
   const [ready, setReady] = useState<boolean>(isFloating);
 
-  // Pointer’ı floating doğduğunda hemen aktif etmeyelim (baloncuk/donma bug’ı için)
   const [pointerEnabled, setPointerEnabled] = useState<boolean>(!isFloating ? true : false);
   useEffect(() => {
     if (isFloating) {
@@ -147,7 +129,6 @@ export default function DraggableResizableChart({
     };
     const sub = Dimensions.addEventListener('change', onChange);
     return () => sub?.remove();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isFloating, insets.left, insets.right]);
 
   useEffect(() => {
@@ -156,7 +137,6 @@ export default function DraggableResizableChart({
     if (isFloating) {
       setContainerW(prev => (prev === 0 ? computeInitialFloatingW(winW) : clamp(prev, MIN_W, newMax)));
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [insets.left, insets.right, winW, isFloating]);
 
   useEffect(() => {
@@ -203,7 +183,7 @@ export default function DraggableResizableChart({
     }),
   ).current;
 
-  // Pinch
+  // Pinch zoom
   const pinchBase = useRef({ dist: 0, w: 0, h: 0 });
   const pinchResponder = useRef(
     PanResponder.create({
@@ -239,7 +219,6 @@ export default function DraggableResizableChart({
   ).current;
 
   /* --- DATA hazırlığı --- */
-  // 1) ortak kesişim boyutu
   const trimmed = useMemo(() => {
     const n = Math.min(labels?.length ?? 0, ...(data?.map(d => d.data.length) ?? [0]));
     const useLabels = (labels || []).slice(0, n);
@@ -250,39 +229,44 @@ export default function DraggableResizableChart({
     return { labels: useLabels, series: useSeries, n };
   }, [labels, data]);
 
-  // 2) görsel ölçek seçimi
   const scaleMode: VisualScale =
     visualScale === 'auto'
       ? (trimmed.series.length > 1 ? 'minmax' : 'raw')
       : visualScale;
 
-  // 3) serileri normalize et (min–max → 0..100) ⇒ çizgiler kesişsin
   const normalized = useMemo(() => {
     if (scaleMode !== 'minmax') return trimmed.series.map(s => s.values);
     return trimmed.series.map(s => {
       const min = Math.min(...s.values);
       const max = Math.max(...s.values);
       if (!isFinite(min) || !isFinite(max) || max === min) {
-        return s.values.map(() => 50); // flat ise ortada çiz
+        return s.values.map(() => 50);
       }
       return s.values.map(v => ((v - min) / (max - min)) * 100);
     });
   }, [trimmed.series, scaleMode]);
 
-  // 4) chart noktaları
+  // ✅ Saatleri sadece tam saatlerde göster
   const series = useMemo(() => {
-    const n = trimmed.n;
-    const mid = n > 0 ? Math.floor((n - 1) / 2) : 0;
-    return normalized.map((vals, si) =>
-      vals.map((v, i) => ({
+  return normalized.map((vals, si) =>
+    vals.map((v, i) => {
+      const raw = trimmed.labels?.[i] ?? String(i);
+      const d = new Date(raw);
+      let hhmm = "";
+      if (!isNaN(d.getTime())) {
+        hhmm = d.getMinutes() === 0
+          ? `${d.getHours().toString().padStart(2, '0')}:00`
+          : "";
+      }
+      return {
         value: Number.isFinite(v) ? v : 0,
-        label: i === 0 || i === mid || i === n - 1 ? (trimmed.labels?.[i] ?? String(i)) : '',
+        label: hhmm, // 👈 artık eksende saat görünecek
         _series: tags?.[si] ?? `Series ${si + 1}`,
-      }))
-    );
-  }, [normalized, trimmed, tags]);
+      };
+    })
+  );
+}, [normalized, trimmed, tags]);
 
-  // 5) eksen domain
   const allVals = useMemo(() => series.flat().map(p => p.value).filter(Number.isFinite), [series]);
   const { minY, maxY } = useMemo(() => {
     if (scaleMode === 'minmax') return { minY: 0, maxY: 100 };
@@ -304,7 +288,6 @@ export default function DraggableResizableChart({
   const c3 = data?.[2]?.color?.();
   const c4 = data?.[3]?.color?.();
 
-  // Container style
   const containerStyle: (ViewStyle | undefined)[] = [styles.card];
   if (isDocked && variant === 'fill') {
     containerStyle.push({ padding: 0, borderWidth: 0, borderRadius: 0, marginBottom: 0, backgroundColor: 'transparent' });
@@ -329,43 +312,40 @@ export default function DraggableResizableChart({
   }
 
   const showHeader = !(isDocked && variant === 'fill');
-
-  // İç genişlik
   const innerW = Math.max(1, containerW - (variant === 'card' ? CARD_HPAD_TOTAL : 0));
 
-  // Daha sık spacing
   const denseSpacing = useMemo(() => {
     const points = Math.max(1, (trimmed.labels.length || 2) - 1);
     const ideal = (innerW - 36) / points;
     return Math.max(MIN_SPACING, ideal * SPACING_TIGHT_FACTOR);
   }, [innerW, trimmed.labels.length]);
 
-  const renderPointerLabel = (items: { value: number; label?: string; datasetIndex?: number }[]) => {
-    if (!items || !items.length) return null;
-    const timeLabel = items[0]?.label ?? '';
-    const colorArr = [c1, c2, c3, c4].filter(Boolean) as string[];
-    return (
-      <View style={styles.tooltip}>
-        <Text style={styles.tooltipTime}>{timeLabel}</Text>
-        {items.map((it, idx) => {
-          const color = colorArr[(it?.datasetIndex ?? idx) % colorArr.length] || '#93C5FD';
-          const tagName = tags[(it?.datasetIndex ?? idx)] ?? `Series ${((it?.datasetIndex ?? idx) + 1)}`;
-          const valTxt =
-            scaleMode === 'minmax'
-              ? `${Number(it.value).toFixed(0)} / 100`
-              : Number(it.value).toLocaleString('tr-TR');
-          return (
-            <View key={`pt-${idx}`} style={styles.tooltipRow}>
-              <View style={[styles.dot, { backgroundColor: color }]} />
-              <Text style={styles.tooltipTxt}>
-                {tagName}: <Text style={styles.tooltipVal}>{valTxt}</Text>
-              </Text>
-            </View>
-          );
-        })}
-      </View>
-    );
-  };
+  // tooltip
+  // tooltip
+const renderPointerLabel = (items: { value: number; label?: string; datasetIndex?: number }[]) => {
+  if (!items || !items.length) return null;
+  const colorArr = [c1, c2, c3, c4].filter(Boolean) as string[];
+  return (
+    <View style={styles.tooltip}>
+      {items.map((it, idx) => {
+        const color = colorArr[(it?.datasetIndex ?? idx) % colorArr.length] || '#93C5FD';
+        const tagName = tags[(it?.datasetIndex ?? idx)] ?? `Series ${((it?.datasetIndex ?? idx) + 1)}`;
+        const valTxt =
+          scaleMode === 'minmax'
+            ? `${Number(it.value).toFixed(0)}`
+            : Number(it.value).toLocaleString('tr-TR');
+        return (
+          <View key={`pt-${idx}`} style={styles.tooltipRow}>
+            <View style={[styles.dot, { backgroundColor: color }]} />
+            <Text style={styles.tooltipTxt}>
+              {tagName}: <Text style={styles.tooltipVal}>{valTxt}</Text>
+            </Text>
+          </View>
+        );
+      })}
+    </View>
+  );
+};
 
   const ChartCard = (
     <View
@@ -412,67 +392,46 @@ export default function DraggableResizableChart({
         style={[styles.chartWrap, variant === 'fill' ? { marginTop: 0, width: '100%', height: chartH } : { width: innerW }]}
         {...((isFloating || (isDocked && pinchEnabledInDocked)) ? pinchResponder.panHandlers : {})}
       >
-        {ready && innerW > 0 && (
+        {ready && (
           <LineChart
-            height={chartH}
-            width={innerW}
-            data={series[0] ?? []}
-            data2={series[1] ?? undefined}
-            data3={series[2] ?? undefined}
-            data4={series[3] ?? undefined}
             curved={curved}
-            thickness={3}
-            color={c1}
-            color2={series[1] ? (c2 as string) : undefined}
-            color3={series[2] ? (c3 as string) : undefined}
-            color4={series[3] ? (c4 as string) : undefined}
-            hideDataPoints={true}
-            yAxisTextStyle={{ color: TOKENS.textSecondary, fontSize: compact ? 10 : 12 }}
-            xAxisLabelTextStyle={{ color: TOKENS.textSecondary, fontSize: compact ? 10 : 12, fontWeight: '600' }}
-            yAxisLabelWidth={compact ? 30 : 40}
-            xAxisThickness={0}
-            yAxisThickness={0}
-            rulesType={'solid'}
-            rulesColor={'rgba(148,163,184,0.16)'}
-            noOfSections={4}
-            maxValue={maxY}
-            {...domainProps}
-            initialSpacing={6}
+            thickness={2}
+            color1={c1}
+            color2={c2}
+            color3={c3}
+            color4={c4}
+            data={series[0]}
+            data2={series[1]}
+            data3={series[2]}
+            data4={series[3]}
+            areaChart={false}
+            startFillColor="transparent"
+            endFillColor="transparent"
+            startOpacity={0}
+            endOpacity={0}
+            yAxisOffset={minY}
+            initialSpacing={12}
             spacing={denseSpacing}
-            endSpacing={0}
-            pointerConfig={
-              pointerEnabled
-                ? {
-                    showPointerStrip: true,
-                    pointerStripColor: 'rgba(148,163,184,0.35)',
-                    pointerStripWidth: 1.5,
-                    pointerStripUptoDataPoint: true,
-                    pointerColor: '#93C5FD',
-                    radius: 3,
-                    activatePointersOnLongPress: true, // uzun basınca
-                    autoAdjustPointerLabelPosition: true,
-                    pointerLabelWidth: 180,
-                    pointerVanishDelay: 900,
-                    pointerLabelComponent: (items: any[]) => renderPointerLabel(items as any),
-                  } as any
-                : undefined
-            }
+            yAxisTextStyle={{ color: TOKENS.textSecondary, fontSize: 11 }}
+            xAxisLabelTextStyle={{ color: TOKENS.textSecondary, fontSize: 11 }}
+            hideDataPoints
+            xAxisColor={TOKENS.stroke}
+            yAxisColor={TOKENS.stroke}
+            rulesColor={TOKENS.stroke}
+            hideRules={false}
+            yAxisThickness={0}
+            xAxisThickness={0}
+            {...domainProps}
+            pointerConfig={{
+              pointerStripColor:'#E5E7EB',
+              pointerStripWidth:1,
+              pointerColor:'#E5E7EB',
+              pointerLabelComponent: renderPointerLabel,
+            }}
+            isAnimated
+            animateOnDataChange
+            animationDuration={1200}
           />
-        )}
-
-        {isDocked && !pinchEnabledInDocked && (
-          <Pressable
-            onLongPress={onRequestUndock}
-            delayLongPress={280}
-            style={[StyleSheet.absoluteFill, { zIndex: 10 }]}
-            hitSlop={10}
-          />
-        )}
-
-        {isDocked && variant === 'fill' && (
-          <TouchableOpacity onPress={onRequestUndock} style={styles.undockBtn} hitSlop={{ top:10, bottom:10, left:10, right:10 }}>
-            <Feather name="external-link" size={16} color="#93C5FD" />
-          </TouchableOpacity>
         )}
       </View>
     </View>
@@ -482,48 +441,72 @@ export default function DraggableResizableChart({
 }
 
 const styles = StyleSheet.create({
-  card: {
-    borderRadius: 22,
-    backgroundColor: TOKENS.surface,
-    padding: CARD_PAD,
-    borderWidth: 1,
-    borderColor: TOKENS.stroke,
-    marginBottom: 12,
-    overflow: 'hidden',
+  card:{ 
+    backgroundColor:TOKENS.surface, 
+    borderRadius:14, 
+    padding:12, 
+    borderWidth:1, 
+    borderColor:'rgba(148,163,184,0.18)', 
+    marginBottom:12 
   },
-  header: { height:44, paddingHorizontal:8, flexDirection:'row', alignItems:'center' },
-  dragHandle: { paddingHorizontal: 6, paddingVertical: 4, marginRight: 6 },
-  title: { color:'#38BDF8', fontWeight:'900', fontSize:14, marginRight:10 },
-  tagsRow: { flexDirection:'row', flexWrap:'wrap', gap:6, flex:1, paddingRight:6 },
-  tag: { paddingHorizontal:10, paddingVertical:4, borderRadius:12, maxWidth: 140 },
-  tagText: { color:TOKENS.chipTextOnColor, fontSize:12, fontWeight:'700' },
-
-  iconBtn: {
-    paddingHorizontal:8, paddingVertical:6, borderRadius:10,
-    backgroundColor:'rgba(30,41,59,0.6)', borderWidth:1, borderColor:'rgba(147,197,253,0.35)',
+  header:{ 
+    flexDirection:'row', 
+    alignItems:'center', 
+    justifyContent:'space-between', 
+    marginBottom:6 
   },
-
-  chartWrap: { marginTop:8, position:'relative' },
-
-  undockBtn: {
-    position:'absolute', right:8, top:8,
-    padding:6, borderRadius:8,
-    backgroundColor:'rgba(30,41,59,0.6)',
-    borderWidth:1, borderColor:'rgba(147,197,253,0.35)',
+  dragHandle:{ padding:4, marginRight:6 },
+  title:{ fontSize:13, fontWeight:'600', color:'#E0E7FF', marginRight:6 },
+  tagsRow:{ flexDirection:'row', flex:1, gap:6 },
+  tag:{ 
+    paddingHorizontal:6, 
+    paddingVertical:2, 
+    borderRadius:6, 
+    minWidth:28, 
+    justifyContent:'center', 
+    alignItems:'center' 
   },
-
-  // Tooltip
-  tooltip: {
-    paddingHorizontal:10,
-    paddingVertical:8,
-    borderRadius:12,
-    backgroundColor: TOKENS.tooltipBg,
+  tagText:{ fontSize:11, color:TOKENS.chipTextOnColor },
+  iconBtn:{ 
+    padding:6, 
+    borderWidth:1, 
+    borderRadius:8, 
+    borderColor:'rgba(148,163,184,0.3)' 
+  },
+  chartWrap:{ marginTop:6 },
+  
+  // ✅ Tooltip kutusu
+  tooltip:{
+    backgroundColor:TOKENS.tooltipBg,
+    padding:10,
+    borderRadius:8,
     borderWidth:1,
-    borderColor: TOKENS.tooltipStroke,
+    borderColor:TOKENS.tooltipStroke,
+    shadowColor:'#000',
+    shadowOpacity:0.3,
+    shadowRadius:6,
+    shadowOffset:{width:0,height:3},
+    minWidth:120,
+    alignItems:'flex-start',
   },
-  tooltipTime: { color:'#E2E8F0', fontSize:12, fontWeight:'800', marginBottom:6 },
-  tooltipRow: { flexDirection:'row', alignItems:'center', marginTop:2 },
-  dot: { width:8, height:8, borderRadius:4, marginRight:6 },
-  tooltipTxt: { color:'#CBD5E1', fontSize:12 },
-  tooltipVal: { color:'#F8FAFC', fontWeight:'800' },
+  tooltipArrow:{
+    position:'absolute',
+    bottom:-6, // kutunun altına taşacak
+    left:'50%',
+    marginLeft:-6,
+    width:0,
+    height:0,
+    borderLeftWidth:6,
+    borderRightWidth:6,
+    borderTopWidth:6,
+    borderStyle:'solid',
+    backgroundColor:'transparent',
+    borderLeftColor:'transparent',
+    borderRightColor:'transparent',
+    borderTopColor:TOKENS.tooltipBg, // kutu ile aynı renk
+  },
+  tooltipRow:{ flexDirection:'row', alignItems:'center', marginBottom:3 },
+  dot:{ width:10, height:10, borderRadius:5, marginRight:6 },
+  tooltipTxt:{ fontSize:12, color:'#e2e8f0' },
+  tooltipVal:{ fontWeight:'700', color:'#facc15' }, // sarı highlight
 });

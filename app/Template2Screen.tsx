@@ -1,4 +1,4 @@
-// Template2Screen.tsx
+// app/Template2Screen.tsx
 import { Feather } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
@@ -8,6 +8,7 @@ import {
   FlatList,
   LayoutRectangle,
   Modal,
+  PanResponder,
   Pressable,
   ScrollView,
   StatusBar,
@@ -19,13 +20,11 @@ import {
 } from 'react-native';
 import { LineChart } from 'react-native-gifted-charts';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import type { SlotState } from '../components/dragdrop/DragDropContext';
 
-// Drag & Drop (LV kartları için)
-import { DragDropProvider } from '../components/dragdrop/DragDropContext';
-import { DraggableCard } from '../components/dragdrop/DraggableCard';
-import { DropSlot } from '../components/dragdrop/DropSlot';
-import type { Slot, Widget } from '../components/dragdrop/types';
+// Drag & Drop
+import { DragDropProvider, useDragDrop } from '../components/dragdrop/DragDropContext';
+import DropZone from '../components/dragdrop/DropZone';
+import type { Slot, SlotId } from '../components/dragdrop/types';
 
 // App bileşenleri
 import ChartSettingsModal from '../components/ChartSettingsModal';
@@ -45,18 +44,23 @@ type ChartConfig = {
   color: string;
 };
 
+// DraggableResizableChart dataset tipi
+type ChartDataset = { data: number[]; color: () => string };
+
 type ChartSlotId = 'chartA' | 'chartB';
+type LVSlotId = 'lv1' | 'lv2' | 'lv3' | 'lv4';
 
 type ChartFloat = { id: string; cfg: ChartConfig; x: number; y: number };
 
 type LastValueSettings = { tag: string; title: string };
 
-const STORAGE_KEY = 'template2_state_v3';
+const STORAGE_KEY = 'template2_state_v4';
 
 /* =========================
    Helpers
 ========================= */
-const TAG_NAMES: string[] = Object.keys(mockChartData);
+const TAG_NAMES_RAW: string[] = Object.keys(mockChartData || {});
+const TAG_NAMES: string[] = [...TAG_NAMES_RAW].sort();
 const uid = () => Math.random().toString(36).slice(2);
 
 const chartColors = [
@@ -74,11 +78,21 @@ const TOKENS = {
   accent: '#60A5FA',
 };
 
-const generateTimeLabels = (start: string, end: string, freqInSec: number): string[] => {
+// 🔒 DropZone kabul listesi – sabit referans
+const LV_ACCEPTS: ('lastValue')[] = ['lastValue'];
+
+// ---- helper: slotsSignature (sonsuz döngü koruması)
+const slotsSignature = (slots: Partial<Record<SlotId, Slot>> | null) => {
+  if (!slots) return 'null';
+  const entries = Object.entries(slots).sort(([a], [b]) => a.localeCompare(b));
+  return entries.map(([k, v]) => `${k}:${v?.widgetId ?? ''}`).join('|');
+};
+
+const generateTimeLabels = (start: string, end: string, freqInSec: number, limit = 500): string[] => {
   const out: string[] = [];
   const s = new Date(start); const e = new Date(end);
   if (isNaN(s.getTime()) || isNaN(e.getTime()) || freqInSec <= 0 || s > e) return out;
-  for (let t = s.getTime(); t <= e.getTime(); t += freqInSec * 1000) {
+  for (let t = s.getTime(); t <= e.getTime() && out.length < limit; t += freqInSec * 1000) {
     out.push(new Date(t).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }));
   }
   return out;
@@ -86,13 +100,22 @@ const generateTimeLabels = (start: string, end: string, freqInSec: number): stri
 
 const toChartProps = (cfg: ChartConfig) => {
   const labels = generateTimeLabels(cfg.startTime, cfg.endTime, cfg.freq);
-  const datasets = cfg.tags.map((tag, i) => {
+
+  if (!labels.length) {
+    return {
+      datasets: [] as ChartDataset[],
+      labels: [] as string[],
+    };
+  }
+
+  const datasets: ChartDataset[] = cfg.tags.map((tag, i) => {
     const rawValues = mockChartData[tag]?.values || [];
     const safe = Array.from({ length: Math.min(labels.length, rawValues.length) }).map((_, j) => {
       const v = rawValues[j]; return (typeof v === 'number' && isFinite(v)) ? v : 0;
     });
     return { data: safe, color: () => chartColors[i % chartColors.length] };
   });
+
   return { datasets, labels };
 };
 
@@ -212,15 +235,19 @@ const LastValueCardUI: React.FC<{
   const spark = raw.map((v) => ({ value: v - min + pad }));
 
   return (
-    <View style={styles.squareCard} onLayout={(e) => setW(e.nativeEvent.layout.width)}>
+    <View
+      style={styles.squareCard}
+      onLayout={(e) => {
+        const nw = e.nativeEvent.layout.width;
+        setW((prev) => (prev === nw ? prev : nw)); // layout loop guard
+      }}
+    >
       <View style={styles.cardHeader}>
         <Text style={styles.cardTitle}>{title}</Text>
         <View style={styles.iconRow}>
-          {/* ✏️ sadece isim/tag değiştirir */}
           <Pressable onPress={onEdit} hitSlop={8}>
             <Text style={styles.iconText}>✏️</Text>
           </Pressable>
-          {/* Çöp: kartı sıfırlar (tag/title -> boş) */}
           <Pressable onPress={onClear} hitSlop={8}>
             <Text style={[styles.iconText, { marginLeft: 8 }]}>🗑️</Text>
           </Pressable>
@@ -240,7 +267,7 @@ const LastValueCardUI: React.FC<{
                   hideDataPoints
                   hideRules
                   thickness={2}
-                  curved
+                  curved={false}
                   adjustToWidth
                   endSpacing={0}
                   initialSpacing={0}
@@ -317,6 +344,57 @@ const ChartSlotBox = ({
 };
 
 /* =========================
+   LV Drag Overlay (ghost) — SADECE GÖRSEL
+========================= */
+const LVDragOverlay: React.FC<{
+  visible: boolean;
+  start: { x: number; y: number; w: number; h: number };
+  settings: LastValueSettings;
+  lockScroll: (v: boolean) => void;
+}> = ({ visible, start, settings, lockScroll }) => {
+  useEffect(() => {
+    if (visible) {
+      lockScroll(true);
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(()=>{});
+    } else {
+      lockScroll(false);
+    }
+  }, [visible, lockScroll]);
+
+  if (!visible) return null;
+
+  return (
+    <View
+      style={{
+        position: 'absolute',
+        left: start.x,
+        top: start.y,
+        width: start.w,
+        height: start.h,
+        zIndex: 999,
+        opacity: 0.98,
+      }}
+      pointerEvents="none"
+    >
+      <View style={styles.squareCard}>
+        <View style={styles.cardHeader}>
+          <Text style={styles.cardTitle}>{settings.title}</Text>
+        </View>
+        <View style={[styles.lastValueBody, { paddingTop: 8 }]}>
+          <Text style={styles.lastValueNumber}>
+            {(() => {
+              const rec = mockChartData[settings.tag];
+              if (!rec || !rec.values || rec.values.length === 0) return '—';
+              return String(rec.values[rec.values.length - 1]);
+            })()}
+          </Text>
+        </View>
+      </View>
+    </View>
+  );
+};
+
+/* =========================
    Screen
 ========================= */
 const Template2Screen: React.FC = () => {
@@ -326,20 +404,20 @@ const Template2Screen: React.FC = () => {
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleInput, setTitleInput] = useState('Template 2');
 
-  // DragDrop (sadece LV için)
+  // DragDrop (sadece LV hover ölçümü için)
   const [initialSlots, setInitialSlots] = useState<Slot[] | null>(null);
-  const [latestSlots, setLatestSlots] = useState<SlotState | null>(null);
+  const [latestSlots, setLatestSlots] = useState<Partial<Record<SlotId, Slot>> | null>(null);
 
-  // LV durumları
+  // LV durumları — HER SLOT KENDİ ANAHTARINI TUTAR
   const [lvSettings, setLVSettings] = useState<Record<string, LastValueSettings | null>>({});
 
-  // Chart — Template1 mantığı
+  // Chart
   const [chartSlots, setChartSlots] = useState<{ chartA: ChartConfig | null; chartB: ChartConfig | null }>({ chartA: null, chartB: null });
   const [floatingCharts, setFloatingCharts] = useState<ChartFloat[]>([]);
   const [modalVisible, setModalVisible] = useState(false);
   const [editDraft, setEditDraft] = useState<{ cfg: ChartConfig | null }>({ cfg: null });
 
-  // Slot ölçüm/hover
+  // Slot ölçüm/hover (chart alanları)
   const [slotRects, setSlotRects] = useState<Record<ChartSlotId, LayoutRectangle | null>>({ chartA: null, chartB: null });
   const [slotHeights, setSlotHeights] = useState<Record<ChartSlotId, number>>({ chartA: 0, chartB: 0 });
   const [hoveredSlot, setHoveredSlot] = useState<ChartSlotId | null>(null);
@@ -349,8 +427,25 @@ const Template2Screen: React.FC = () => {
   const [lastSavedAt, setLastSavedAt] = useState<number | null>(null);
   const [autosave, setAutosave] = useState(true);
   const [showToast, setShowToast] = useState(false);
+  const [hydrated, setHydrated] = useState(false);
 
-  // Hover haptic (grafik slotlarına sürüklerken)
+  // 🔒 Scroll kilidi
+  const [scrollLocked, setScrollLocked] = useState(false);
+
+  // LV drag overlay state
+  const [dragLV, setDragLV] = useState<{
+    active: boolean;
+    from: LVSlotId;
+    widgetId: string;
+    settings: LastValueSettings;
+    x: number; y: number; w: number; h: number;
+  } | null>(null);
+
+  // ---- guards
+  const lastSlotsSigRef = useRef<string>('');   // DragDrop onChange guard
+  const lastSavedSigRef = useRef<string>('');   // Autosave guard
+
+  // Hover haptic (chart alanları için)
   useEffect(() => {
     if (hoveredSlot && hoveredSlot !== lastHover.current) {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(()=>{});
@@ -372,50 +467,72 @@ const Template2Screen: React.FC = () => {
         const raw = await AsyncStorage.getItem(STORAGE_KEY);
         if (raw) {
           const parsed = JSON.parse(raw);
-          // LV provider slotları
-          const slots: Slot[] = Array.isArray(parsed.slots)
-            ? (parsed.slots as Slot[]).filter((s) => ['lv1','lv2','lv3','lv4'].includes(s.id))
+
+          // LV slotlarını güvenli şekilde kur (sabit accepts referansı ile)
+          const restored: Slot[] = Array.isArray(parsed.slots)
+            ? (parsed.slots as Slot[])
+                .filter((s: Slot) => ['lv1','lv2','lv3','lv4'].includes(s.id))
+                .map((s: Slot) => ({
+                  id: s.id as LVSlotId,
+                  accepts: LV_ACCEPTS,
+                  widgetId: s.widgetId ?? (`lastValue:${s.id}`),
+                }))
             : [
-                { id: 'lv1', accepts: ['lastValue'], widgetId: 'lastValue:lv1' },
-                { id: 'lv2', accepts: ['lastValue'], widgetId: 'lastValue:lv2' },
-                { id: 'lv3', accepts: ['lastValue'], widgetId: 'lastValue:lv3' },
-                { id: 'lv4', accepts: ['lastValue'], widgetId: 'lastValue:lv4' },
+                { id: 'lv1', accepts: LV_ACCEPTS, widgetId: 'lastValue:lv1' },
+                { id: 'lv2', accepts: LV_ACCEPTS, widgetId: 'lastValue:lv2' },
+                { id: 'lv3', accepts: LV_ACCEPTS, widgetId: 'lastValue:lv3' },
+                { id: 'lv4', accepts: LV_ACCEPTS, widgetId: 'lastValue:lv4' },
               ];
-          setInitialSlots(slots);
+          setInitialSlots(restored);
 
           setPageTitle(parsed.pageTitle ?? 'Template 2');
           setTitleInput(parsed.pageTitle ?? 'Template 2');
-          setLVSettings(parsed.lvSettings ?? {});
+          setAutosave(parsed.autosave ?? true);
 
-          // Yeni alanlar
+          setLVSettings(parsed.lvSettings ?? {
+            'lastValue:lv1': null,
+            'lastValue:lv2': null,
+            'lastValue:lv3': null,
+            'lastValue:lv4': null,
+          });
+
           if (parsed.chartSlots) setChartSlots(parsed.chartSlots);
           if (parsed.floatingCharts) setFloatingCharts(parsed.floatingCharts);
 
           setLastSavedAt(parsed.lastSavedAt ?? null);
-          return;
+        } else {
+          // defaults
+          setInitialSlots([
+            { id: 'lv1', accepts: LV_ACCEPTS, widgetId: 'lastValue:lv1' },
+            { id: 'lv2', accepts: LV_ACCEPTS, widgetId: 'lastValue:lv2' },
+            { id: 'lv3', accepts: LV_ACCEPTS, widgetId: 'lastValue:lv3' },
+            { id: 'lv4', accepts: LV_ACCEPTS, widgetId: 'lastValue:lv4' },
+          ]);
+          setLVSettings({
+            'lastValue:lv1': null,
+            'lastValue:lv2': null,
+            'lastValue:lv3': null,
+            'lastValue:lv4': null,
+          });
         }
-      } catch {}
-      // defaults
-      setInitialSlots([
-        { id: 'lv1', accepts: ['lastValue'], widgetId: 'lastValue:lv1' },
-        { id: 'lv2', accepts: ['lastValue'], widgetId: 'lastValue:lv2' },
-        { id: 'lv3', accepts: ['lastValue'], widgetId: 'lastValue:lv3' },
-        { id: 'lv4', accepts: ['lastValue'], widgetId: 'lastValue:lv4' },
-      ]);
+      } finally {
+        setHydrated(true);
+      }
     })();
   }, []);
 
   /* ------------ SAVE ------------- */
-  const saveState = async (slots: SlotState | null, fromAutosave = false) => {
+  const saveState = async (slots: Partial<Record<SlotId, Slot>> | null, fromAutosave = false) => {
+    const slotsArr: Slot[] = slots ? Object.values(slots) : (initialSlots ?? []);
     const payload = {
       pageTitle,
-      slots,            // <— LV slot haritası
+      autosave,
+      slots: slotsArr,
       lvSettings,
       chartSlots,
       floatingCharts,
       lastSavedAt: Date.now(),
     };
-
     await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
     setLastSavedAt(payload.lastSavedAt);
     if (fromAutosave) {
@@ -424,19 +541,32 @@ const Template2Screen: React.FC = () => {
     }
   };
 
-  // Chart state değişince autosave
+  // Chart/LV/slot state değişince autosave (guard ile)
   useEffect(() => {
-    if (!autosave) return;
-    saveState(latestSlots, true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chartSlots, floatingCharts, lvSettings]);
+    if (!autosave || !hydrated) return;
+    const sigSlots = slotsSignature(latestSlots);
+    const sigPayload =
+      sigSlots +
+      '|' + JSON.stringify(chartSlots) +
+      '|' + JSON.stringify(floatingCharts) +
+      '|' + JSON.stringify(lvSettings);
 
+    if (sigPayload === lastSavedSigRef.current) return;
+    lastSavedSigRef.current = sigPayload;
+    saveState(latestSlots, true);
+  }, [autosave, hydrated, latestSlots, chartSlots, floatingCharts, lvSettings]);
+
+  // ⛔️ Guard — buradan sonra HOOK yok!
   if (!initialSlots) return <View style={{ flex: 1, backgroundColor: TOKENS.bg }} />;
 
   /* ------------ CHART handlers ------------- */
   const onPlus = () => { setEditDraft({ cfg: null }); setModalVisible(true); };
 
-  const handleApplySettings = (settings: any, editingId?: string) => {
+  type ChartSettingsForm = {
+    tags: string[]; startTime: string; endTime: string; freq: number; sampleType: string;
+  };
+
+  const handleApplySettings = (settings: ChartSettingsForm, editingId?: string) => {
     const { tags, startTime, endTime, freq, sampleType } = settings;
     if (!startTime || !endTime || !sampleType || !freq || !Array.isArray(tags) || !tags.length) {
       alert('Lütfen tüm alanları doldurun.'); return;
@@ -479,23 +609,60 @@ const Template2Screen: React.FC = () => {
     removeFromSlot(sid);
   };
 
+  /* ------------ LV drag helpers ------------- */
+  const widgetKey = (sid: LVSlotId) => `lastValue:${sid}` as const;
+
+  const beginLVDrag = (payload: {
+    from: LVSlotId;
+    widgetId: string;
+    settings: LastValueSettings;
+    frame: { x: number; y: number; width: number; height: number };
+  }) => {
+    setDragLV({
+      active: true,
+      from: payload.from,
+      widgetId: payload.widgetId,
+      settings: payload.settings,
+      x: payload.frame.x,
+      y: payload.frame.y,
+      w: payload.frame.width,
+      h: payload.frame.height,
+    });
+  };
+
+  // LV kartını sürüklerken hayaletin pozisyonunu güncelle
+  const moveLVGhost = (x: number, y: number) => {
+    setDragLV(prev => (prev ? { ...prev, x, y } : prev));
+  };
+
+  const completeLVDrag = (target: LVSlotId | null) => {
+    const current = dragLV;
+    setDragLV(null);
+    if (!target || !current) return;
+
+    setLVSettings(prev => {
+      const next = { ...prev };
+      const srcKey = widgetKey(current.from);
+      const dstKey = widgetKey(target);
+      [next[srcKey], next[dstKey]] = [next[dstKey] ?? null, next[srcKey] ?? null];
+      return next;
+    });
+
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(()=>{});
+  };
+
   return (
     <View style={{ flex: 1, backgroundColor: TOKENS.bg }}>
       <DragDropProvider
-        initialSlots={initialSlots}
-        setScrollLocked={() => {}}
-        // LV sürükle-bırak değişince kaydet
-        onChange={(slots, meta) => {
-          setLatestSlots(slots);
-          // Meta ile LV swap/drop event’lerinde haptic
-          try {
-            if (meta?.type === 'drop' || meta?.type === 'swap') {
-              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(()=>{});
-            }
-          } catch {}
-          if (autosave) saveState(slots, true);
-        }}
-      >
+  initialSlots={initialSlots ?? undefined}
+  setScrollLocked={setScrollLocked}
+  onChange={(slots: Partial<Record<SlotId, Slot>> | null) => {
+    const sig = slotsSignature(slots);
+    if (sig === lastSlotsSigRef.current) return;
+    lastSlotsSigRef.current = sig;
+    setLatestSlots(slots);
+  }}
+>
         {/* Header */}
         <Header
           insetsTop={insets.top}
@@ -530,7 +697,7 @@ const Template2Screen: React.FC = () => {
                 <DraggableResizableChart
                   data={p.datasets}
                   labels={p.labels}
-                  tags={f.cfg.tags}
+                  tags={p.datasets.length ? f.cfg.tags : []}
                   sampleType={f.cfg.sampleType}
                   freq={f.cfg.freq}
                   mode="floating"
@@ -540,7 +707,10 @@ const Template2Screen: React.FC = () => {
                     const z = whichZoneSync(absX,absY);
                     return Promise.resolve(z === 'chartA' ? 'slot1' : z === 'chartB' ? 'slot2' : null);
                   }}
-                  onDrop={(zoneId) => attachToSlot(f.id, zoneId === 'slot1' ? 'chartA' : 'chartB')}
+                  onDrop={(zoneId) => {
+                    if (!zoneId) { setHoveredSlot(null); return; }
+                    attachToSlot(f.id, zoneId === 'slot1' ? 'chartA' : 'chartB');
+                  }}
                   onDragMove={({absX,absY}) => setHoveredSlot(whichZoneSync(absX,absY))}
                 />
               </View>
@@ -548,12 +718,41 @@ const Template2Screen: React.FC = () => {
           );
         })}
 
+        {/* LV Drag overlay (sadece görsel) */}
+        <LVDragOverlay
+          visible={!!dragLV}
+          start={{ x: dragLV?.x ?? 0, y: dragLV?.y ?? 0, w: dragLV?.w ?? 0, h: dragLV?.h ?? 0 }}
+          settings={dragLV?.settings ?? { title:'', tag: '' }}
+          lockScroll={setScrollLocked}
+        />
+
         {/* İçerik */}
-        <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+        <ScrollView
+          style={styles.container}
+          contentContainerStyle={styles.content}
+          scrollEnabled={!scrollLocked}
+          keyboardShouldPersistTaps="handled"
+        >
           {/* LV Row 1 */}
           <View style={styles.row}>
-            <LVSlot id="lv1" lvSettings={lvSettings} setLVSettings={setLVSettings} />
-            <LVSlot id="lv2" lvSettings={lvSettings} setLVSettings={setLVSettings} />
+            <LVSlot
+              id="lv1"
+              lvSettings={lvSettings}
+              setLVSettings={setLVSettings}
+              onBeginDrag={beginLVDrag}
+              onMoveGhost={moveLVGhost}
+              onCompleteDrag={completeLVDrag}
+              draggingFrom={dragLV?.from ?? null}
+            />
+            <LVSlot
+              id="lv2"
+              lvSettings={lvSettings}
+              setLVSettings={setLVSettings}
+              onBeginDrag={beginLVDrag}
+              onMoveGhost={moveLVGhost}
+              onCompleteDrag={completeLVDrag}
+              draggingFrom={dragLV?.from ?? null}
+            />
           </View>
 
           {/* CHART SLOT A */}
@@ -588,8 +787,24 @@ const Template2Screen: React.FC = () => {
 
           {/* LV Row 2 */}
           <View style={styles.row}>
-            <LVSlot id="lv3" lvSettings={lvSettings} setLVSettings={setLVSettings} />
-            <LVSlot id="lv4" lvSettings={lvSettings} setLVSettings={setLVSettings} />
+            <LVSlot
+              id="lv3"
+              lvSettings={lvSettings}
+              setLVSettings={setLVSettings}
+              onBeginDrag={beginLVDrag}
+              onMoveGhost={moveLVGhost}
+              onCompleteDrag={completeLVDrag}
+              draggingFrom={dragLV?.from ?? null}
+            />
+            <LVSlot
+              id="lv4"
+              lvSettings={lvSettings}
+              setLVSettings={setLVSettings}
+              onBeginDrag={beginLVDrag}
+              onMoveGhost={moveLVGhost}
+              onCompleteDrag={completeLVDrag}
+              draggingFrom={dragLV?.from ?? null}
+            />
           </View>
 
           {/* CHART SLOT B */}
@@ -629,16 +844,22 @@ const Template2Screen: React.FC = () => {
         <ChartSettingsModal
           visible={modalVisible}
           onClose={() => setModalVisible(false)}
-          onApply={(payload)=>handleApplySettings(payload, editDraft.cfg?.id)}
-          tagOptions={TAG_NAMES.map((name)=>({name}))}
-          editData={editDraft.cfg ? {
-            tags: editDraft.cfg.tags,
-            startTime: editDraft.cfg.startTime,
-            endTime: editDraft.cfg.endTime,
-            freq: editDraft.cfg.freq,
-            sampleType: editDraft.cfg.sampleType,
-          } : null}
-          editChartIndex={null}
+          onApply={(payload)=>handleApplySettings(payload as any, editDraft.cfg?.id)}
+          tagOptions={TAG_NAMES}
+
+         editData={
+  editDraft?.cfg
+    ? {
+        tags: editDraft.cfg.tags ?? [],
+        startTime: editDraft.cfg.startTime ?? null,
+        endTime: editDraft.cfg.endTime ?? null,
+        freq: editDraft.cfg.freq ?? null,
+        sampleType: editDraft.cfg.sampleType ?? null,
+      }
+    : undefined
+}
+
+
         />
 
         {showToast && (
@@ -654,38 +875,28 @@ const Template2Screen: React.FC = () => {
 export default Template2Screen;
 
 /* =========================
-   LV Slot (drag & swap LV)
+   LV Slot (ikonla drag + bağımsız state)
 ========================= */
 const LVSlot: React.FC<{
-  id: 'lv1' | 'lv2' | 'lv3' | 'lv4';
+  id: LVSlotId;
   lvSettings: Record<string, LastValueSettings | null>;
   setLVSettings: React.Dispatch<React.SetStateAction<Record<string, LastValueSettings | null>>>;
-}> = ({ id, lvSettings, setLVSettings }) => {
-  const { useDragDrop } = require('../components/dragdrop/DragDropContext');
-  const { slots, dragging, overSlotId } = useDragDrop(); // <— hover/sürükleme bilgisi
+  onBeginDrag: (p: { from: LVSlotId; widgetId: string; settings: LastValueSettings; frame: { x:number;y:number;width:number;height:number } }) => void;
+  onMoveGhost: (x: number, y: number) => void;
+  onCompleteDrag: (target: LVSlotId | null) => void;
+  draggingFrom: LVSlotId | null;
+}> = ({ id, lvSettings, setLVSettings, onBeginDrag, onMoveGhost, onCompleteDrag, draggingFrom }) => {
+  const { updateHover, hoveredSlotId, cancelDrag } = useDragDrop();
   const [, force] = useState(0);
   const [open, setOpen] = useState(false);
 
-  // Parlama & scale animasyonu (hover feedback)
-  const scale = useRef(new Animated.Value(1)).current;
   const glow = useRef(new Animated.Value(0)).current;
+  const cardRef = useRef<View>(null);
 
-  // Mevcut slot ve widget kimliği
-  const slot = slots[id];
-  if (slot && !slot.widgetId) slot.widgetId = `lastValue:${id}`;
-  const widgetId = slot?.widgetId ?? `lastValue:${id}`;
+  const widgetId = `lastValue:${id}`;
   const settings = lvSettings[widgetId] ?? null;
 
-  // Hover olduğunda görsel geri bildirim + haptic
-  useEffect(() => {
-    const isHover = overSlotId === id && dragging != null;
-    Animated.spring(scale, { toValue: isHover ? 1.02 : 1, useNativeDriver: true, friction: 7 }).start();
-    Animated.timing(glow, { toValue: isHover ? 1 : 0, duration: 140, useNativeDriver: false }).start();
-    if (isHover) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(()=>{});
-  }, [overSlotId, dragging, id, scale, glow]);
-
   const onApply = (payload: { tag: string; title: string }) => {
-    // Sadece isim/tag güncelle
     setLVSettings((prev) => ({ ...prev, [widgetId]: payload }));
     force((v) => v + 1);
   };
@@ -694,35 +905,107 @@ const LVSlot: React.FC<{
     force((v) => v + 1);
   };
 
+  const setHover = (hover: boolean) => {
+    Animated.timing(glow, {
+      toValue: hover ? 1 : 0,
+      duration: 120,
+      useNativeDriver: false,
+    }).start();
+  };
+
+  // 🔧 DRAG — jestur doğrudan handle üzerinde başlar
+  const startXY = useRef<{x:number;y:number}>({x:0,y:0});
+  const handlePan = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => !!settings, // boş kartta drag yok
+      onMoveShouldSetPanResponder: () => !!settings,
+      onPanResponderGrant: () => {
+        if (!settings) return;
+        cardRef.current?.measureInWindow?.((x, y, width, height) => {
+          startXY.current = { x, y };
+          onBeginDrag({
+            from: id,
+            widgetId,
+            settings,
+            frame: { x, y, width, height },
+          });
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(()=>{});
+        });
+      },
+      onPanResponderMove: (_e, g) => {
+        if (!settings) return;
+        const nx = startXY.current.x + g.dx;
+        const ny = startXY.current.y + g.dy;
+        onMoveGhost(nx, ny);                // hayaletin yeri
+        updateHover(g.moveX, g.moveY);      // drop hedefini güncelle
+      },
+      onPanResponderRelease: () => {
+        const target = (hoveredSlotId as LVSlotId | null) ?? null;
+        onCompleteDrag(target);
+        cancelDrag(); // hover/id state'ini temizle
+      },
+      onPanResponderTerminate: () => {
+        cancelDrag();
+        onCompleteDrag(null);
+      },
+      onPanResponderTerminationRequest: () => true,
+    })
+  ).current;
+
   return (
-    <DropSlot id={id} style={styles.slotBare}>
-      <Animated.View style={{ transform: [{ scale }], borderRadius: 18 }}>
+    <DropZone id={id} accepts={LV_ACCEPTS} style={styles.slotBare} onHoverChange={setHover}>
+      <Animated.View
+        ref={cardRef as any}
+        style={{
+          borderRadius: 18,
+          opacity: draggingFrom === id ? 0.35 : 1,
+        }}
+      >
         {settings ? (
-          // Uzun bas – sürükle: başka slota bırakınca SWAP (DragDropProvider halledecek)
-          <DraggableCard widget={{ id: widgetId, type: 'lastValue' } as Widget} fromSlotId={id}>
+          <View>
+            {/* Küçük sürükleme (handle) — PanResponder burada */}
+            <View style={{ position:'absolute', left:8, bottom:8, zIndex:10 }}>
+              <View
+                {...handlePan.panHandlers}
+                hitSlop={{ top:10, bottom:10, left:10, right:10 }}
+                style={{
+                  padding:6,
+                  borderRadius:10,
+                  backgroundColor:'rgba(148,163,184,0.12)',
+                  borderWidth:1,
+                  borderColor:'rgba(148,163,184,0.28)',
+                }}
+              >
+                <Feather name="move" size={14} color="#9FB3D1" />
+              </View>
+            </View>
+
             <View>
               <LastValueCardUI
                 title={settings.title}
                 tag={settings.tag}
-                onEdit={() => setOpen(true)}   // ✏️ sadece isim ve tag değiştirir
+                onEdit={() => setOpen(true)}
                 onClear={onClear}
               />
+
               <Animated.View
                 pointerEvents="none"
                 style={[
                   styles.swapOverlay,
                   {
-                    opacity: glow.interpolate({ inputRange:[0,1], outputRange:[0,0.9] }),
-                    borderColor: glow.interpolate({ inputRange:[0,1], outputRange:['rgba(96,165,250,0.0)','rgba(96,165,250,0.8)'] }) as any
-                  }
+                    opacity: glow,
+                    borderColor: (glow as any).interpolate({
+                      inputRange: [0, 1],
+                      outputRange: ['transparent', 'rgba(96,165,250,0.9)'],
+                    }),
+                  },
                 ]}
               >
-                <Text style={styles.swapText}>Bırakınca yer değiştir</Text>
+                <Text style={styles.swapText}>Drop to swap</Text>
               </Animated.View>
             </View>
-          </DraggableCard>
+          </View>
         ) : (
-          // Boşsa: kart oluştur (isim & tag seç)
           <Pressable style={styles.addChartCta} onPress={() => setOpen(true)}>
             <Text style={styles.addChartText}>+ Kart Oluştur</Text>
             <Text style={styles.addChartHint}>Ad ver ve tag seç</Text>
@@ -737,7 +1020,7 @@ const LVSlot: React.FC<{
         onClose={() => setOpen(false)}
         onApply={onApply}
       />
-    </DropSlot>
+    </DropZone>
   );
 };
 
@@ -754,10 +1037,12 @@ const Header: React.FC<{
   setTitleInput: (s:string)=>void;
   autosave: boolean;
   setAutosave: React.Dispatch<React.SetStateAction<boolean>>;
-  onManualSave: (slots: SlotState | null)=>void;
+  onManualSave: (slots: Partial<Record<SlotId, Slot>> | null)=>void;
   lastSavedAt: number | null;
-}> = ({ insetsTop, pageTitle, setPageTitle, editingTitle, setEditingTitle, titleInput, setTitleInput, autosave, setAutosave, onManualSave, lastSavedAt })=>{
-  const { useDragDrop } = require('../components/dragdrop/DragDropContext');
+}> = ({
+  insetsTop, pageTitle, setPageTitle, editingTitle, setEditingTitle,
+  titleInput, setTitleInput, autosave, setAutosave, onManualSave, lastSavedAt
+}) => {
   const { slots } = useDragDrop();
   return (
     <View style={[styles.headerBar, { paddingTop: insetsTop + 6 }]}>
@@ -931,7 +1216,7 @@ const styles = StyleSheet.create({
     borderStyle: 'dashed',
     alignItems: 'center',
     justifyContent: 'center',
-    minHeight: 140,
+    minHeight: 140
   },
   addChartText: { color: '#c7d2de', fontSize: 16, fontWeight: '800', marginBottom: 4 },
   addChartHint: { color: TOKENS.hint, fontSize: 12 },
@@ -947,7 +1232,7 @@ const styles = StyleSheet.create({
     borderStyle: 'dashed',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(96,165,250,0.06)',
+    backgroundColor: 'rgba(96,165,250,0.06)'
   },
   swapText: { color: '#bcd8ff', fontWeight: '800', fontSize: 12, letterSpacing: 0.3 },
 
