@@ -1,6 +1,6 @@
 // components/dragdrop/DropZone.tsx
 import React, { useEffect, useMemo, useRef } from 'react';
-import { View, ViewStyle } from 'react-native';
+import { StyleProp, View, ViewStyle } from 'react-native';
 import { useDragDrop } from './DragDropContext';
 import type { Slot, SlotId } from './types';
 
@@ -25,7 +25,7 @@ export default function DropZone({
 }: {
   id: SlotId;
   accepts: Slot['accepts'];
-  style?: ViewStyle;
+  style?: StyleProp<ViewStyle>;   // ✅ array style da kabul edilir
   children?: React.ReactNode;
   onHoverChange?: (hover: boolean) => void;
 }) {
@@ -53,9 +53,9 @@ export default function DropZone({
       });
     };
 
-    // İlk ölçüm + aralıklı
+    // İlk ölçüm + aralıklı (🔥 artık 100ms)
     const t0 = setTimeout(measureAndRegister, 0);
-    const t = setInterval(measureAndRegister, 800);
+    const t = setInterval(measureAndRegister, 100);
 
     return () => {
       mounted = false;
@@ -74,7 +74,11 @@ export default function DropZone({
   }, [hoveredSlotId, id, onHoverChange]);
 
   return (
-    <View ref={ref} style={[{ flex: 1 }, style]} pointerEvents="box-none">
+    <View
+      ref={ref}
+      style={[{ flex: 1 }, style]}
+      pointerEvents="box-none"   // ✅ DropZone’un hover almasını kolaylaştır
+    >
       {children}
     </View>
   );

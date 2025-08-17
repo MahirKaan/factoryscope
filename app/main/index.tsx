@@ -3,19 +3,18 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
-import React, { useCallback, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { Animated, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { LineChart } from 'react-native-gifted-charts';
 
 const tokens = {
   primary: '#00E5FF',
-  surface: 'rgba(255,255,255,0.06)',
+  accent: '#4FACFE',
+  highlight: '#FFB347',
+  surface: 'rgba(255,255,255,0.07)',
   text: '#EAF6F8',
   textDim: '#9AB3BA',
-  // gradient katmanları: en açık -> en koyu
-  bgTop: '#0f2027',
-  bgMid: '#203a43',
-  bgBot: '#2c5364', // en açık
-  radius: 18,
+  radius: 22,
 };
 
 export default function MainScreen() {
@@ -25,41 +24,61 @@ export default function MainScreen() {
     SplashScreen.hideAsync().catch(() => {});
   }, []);
 
+  const anim = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(anim, { toValue: 1, duration: 8000, useNativeDriver: false }),
+        Animated.timing(anim, { toValue: 0, duration: 8000, useNativeDriver: false }),
+      ])
+    ).start();
+  }, []);
+
+  const bgColors = anim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['#0B1220', '#101B30'],
+  });
+
   return (
-    <LinearGradient
-  // Sağda parlak, solda koyu (sağdan sola akış)
-  colors={[tokens.bgBot, tokens.bgMid, tokens.bgTop]}
-  start={{ x: 1, y: 0.5 }}
-  end={{ x: 0, y: 0.5 }}
-  style={styles.container}
-  onLayout={onLayoutRootView}
->
+    <Animated.View style={{ flex: 1, backgroundColor: bgColors }} onLayout={onLayoutRootView}>
+      <LinearGradient
+        colors={['#0B1220', '#101B30', '#15233E']}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={styles.container}
+      >
+        {/* Header */}
+        <View style={styles.header}>
+          <Animated.Text style={[styles.appName, { opacity: anim }]}>
+            FactoryPulse
+          </Animated.Text>
+          <Text style={styles.subtitle}>Enterprise Monitoring Platform</Text>
+        </View>
 
-      {/* Header */}
-      <View style={styles.header}>
-        <Text style={styles.appName}>FactoryPulse</Text>
-        <Text style={styles.subtitle}>Choose an action</Text>
-      </View>
-
-      {/* Action cards only */}
-      <View style={styles.cards}>
-        <ActionCard
-          icon="speedometer-outline"
-          title="Factory Status"
-          onPress={() => router.push('/(tabs)/HomeScreen')}
-        />
-        <ActionCard
-          icon="list-outline"
-          title="Tag Selection"
-          onPress={() => router.push('/(tabs)/LineChartScreen')}
-        />
-        <ActionCard
-          icon="bookmark-outline"
-          title="Saved"
-          onPress={() => router.push('/saved-templates')}
-        />
-      </View>
-    </LinearGradient>
+        {/* Action cards */}
+        <View style={styles.cards}>
+          <ActionCard
+            icon="business-outline"
+            title="Factory Status"
+            delay={200}
+            showPreview
+            onPress={() => router.push('/(tabs)/HomeScreen')}
+          />
+          <ActionCard
+            icon="analytics-outline"
+            title="Tag Selection"
+            delay={400}
+            onPress={() => router.push('/(tabs)/LineChartScreen')}
+          />
+          <ActionCard
+            icon="albums-outline"
+            title="Saved Reports"
+            delay={600}
+            onPress={() => router.push('/saved-templates')}
+          />
+        </View>
+      </LinearGradient>
+    </Animated.View>
   );
 }
 
@@ -69,41 +88,69 @@ function ActionCard({
   icon,
   title,
   onPress,
+  delay,
+  showPreview,
 }: {
-  icon: any; // Ionicons name
+  icon: any;
   title: string;
   onPress: () => void;
+  delay: number;
+  showPreview?: boolean;
 }) {
-  const scale = useRef(new Animated.Value(1)).current;
+  const scale = useRef(new Animated.Value(0.9)).current;
+  const opacity = useRef(new Animated.Value(0)).current;
 
-  const pressIn = () =>
-    Animated.timing(scale, { toValue: 0.98, duration: 100, useNativeDriver: true }).start();
-  const pressOut = () =>
-    Animated.timing(scale, { toValue: 1, duration: 120, useNativeDriver: true }).start();
+  useEffect(() => {
+    Animated.parallel([
+      Animated.timing(scale, { toValue: 1, duration: 600, delay, useNativeDriver: true }),
+      Animated.timing(opacity, { toValue: 1, duration: 600, delay, useNativeDriver: true }),
+    ]).start();
+  }, []);
 
   return (
-    <Animated.View style={{ transform: [{ scale }], width: '100%' }}>
-      <TouchableOpacity
-        activeOpacity={0.9}
-        onPressIn={pressIn}
-        onPressOut={pressOut}
-        onPress={onPress}
-        style={{ width: '100%' }}
-      >
-        {/* Yatay border gradient (soldan sağa) */}
+    <Animated.View style={{ transform: [{ scale }], opacity, width: '100%' }}>
+      <TouchableOpacity activeOpacity={0.92} onPress={onPress} style={{ width: '100%' }}>
         <LinearGradient
-          colors={[tokens.primary, 'rgba(0,229,255,0)']}
+          colors={[tokens.primary, tokens.accent, tokens.highlight]}
           start={{ x: 0, y: 0.5 }}
           end={{ x: 1, y: 0.5 }}
           style={styles.cardBorder}
         >
           <View style={styles.cardInner}>
-            {/* İkon çipi: her zeminde net */}
-            <View style={styles.iconChip}>
-              <Ionicons name={icon} size={18} color="#FFFFFF" />
+            {/* Sol taraf: ikon + yazı */}
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <View style={styles.iconChip}>
+                <Ionicons name={icon} size={26} color="#FFFFFF" />
+              </View>
+              <Text style={styles.cardTitle}>{title}</Text>
             </View>
 
-            <Text style={styles.cardTitle}>{title}</Text>
+            {/* Sağ taraf: watermark grafik */}
+            {showPreview && (
+              <View style={styles.previewChart}>
+                <View style={{ opacity: 0.15 }}>
+                  <LineChart
+                    data={[
+                      { value: 40 },
+                      { value: 65 },
+                      { value: 55 },
+                      { value: 75 },
+                      { value: 60 },
+                      { value: 90 },
+                    ]}
+                    thickness={2}
+                    color1={tokens.primary}
+                    hideDataPoints
+                    curved
+                    height={40}
+                    width={100}
+                    xAxisThickness={0}
+                    yAxisThickness={0}
+                    backgroundColor="transparent"
+                  />
+                </View>
+              </View>
+            )}
           </View>
         </LinearGradient>
       </TouchableOpacity>
@@ -116,60 +163,69 @@ function ActionCard({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    paddingHorizontal: 22,
-    paddingTop: 80,
+    paddingHorizontal: 26,
+    paddingTop: 100,
   },
   header: {
-    marginBottom: 24,
+    marginBottom: 50,
     alignItems: 'center',
   },
   appName: {
-    fontSize: 32,
+    fontSize: 36,
     color: tokens.primary,
-    fontWeight: '800',
-    letterSpacing: 0.5,
+    fontWeight: '900',
+    letterSpacing: 1,
+    textShadowColor: '#00E5FF99',
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 22,
   },
   subtitle: {
-    fontSize: 16,
+    fontSize: 17,
     color: tokens.textDim,
-    marginTop: 6,
+    marginTop: 10,
+    fontWeight: '500',
   },
   cards: {
     width: '100%',
-    gap: 14,
+    gap: 22,
   },
   cardBorder: {
     width: '100%',
     borderRadius: tokens.radius,
-    padding: 1.5,
+    padding: 2,
   },
   cardInner: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 16,
-    paddingHorizontal: 18,
+    justifyContent: 'space-between',
+    paddingVertical: 20,
+    paddingHorizontal: 22,
     borderRadius: tokens.radius - 1,
     backgroundColor: tokens.surface,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
+    borderColor: 'rgba(255,255,255,0.1)',
+    overflow: 'hidden', // 🔹 grafik kart dışına taşmaz
   },
-  // ikon çipi
   iconChip: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 42,
+    height: 42,
+    borderRadius: 21,
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 10,
+    marginRight: 16,
     backgroundColor: 'rgba(255,255,255,0.18)',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.28)',
   },
   cardTitle: {
     color: '#fff',
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: '700',
-    letterSpacing: 0.2,
+    letterSpacing: 0.4,
+  },
+  previewChart: {
+    position: 'absolute',
+    right: 10,
+    bottom: 5,
   },
 });
-

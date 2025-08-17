@@ -1,5 +1,5 @@
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Dimensions,
   GestureResponderEvent,
@@ -183,7 +183,7 @@ export default function DraggableResizableChart({
     }),
   ).current;
 
-  // Pinch zoom
+  // ✅ Pinch zoom: hem genişlik hem yükseklik için + docked modda da aktif
   const pinchBase = useRef({ dist: 0, w: 0, h: 0 });
   const pinchResponder = useRef(
     PanResponder.create({
@@ -202,17 +202,12 @@ export default function DraggableResizableChart({
         const d = pinchDistance(e.nativeEvent.touches);
         if (!d || !pinchBase.current.dist) return;
         const scale = d / pinchBase.current.dist;
-        if (isFloating) {
-          const safeMax = maxW;
-          const newW = clamp(pinchBase.current.w * scale, MIN_W, safeMax);
-          const newH = clamp(pinchBase.current.h * scale, MIN_H, MAX_H);
-          setContainerW(newW);
-          setChartH(newH);
-          setPos(p => ({ x: clamp(p.x, 0, Math.max(0, winW - newW - 4)), y: p.y }));
-        } else if (isDocked && pinchEnabledInDocked) {
-          const newH = clamp(pinchBase.current.h * scale, MIN_H, MAX_H);
-          setChartH(newH);
-        }
+        // ✅ Hem W hem H büyüsün / küçülsün
+        const newW = clamp(pinchBase.current.w * scale, MIN_W, maxW);
+        const newH = clamp(pinchBase.current.h * scale, MIN_H, MAX_H);
+        setContainerW(newW);
+        setChartH(newH);
+        setPos(p => ({ x: clamp(p.x, 0, Math.max(0, winW - newW - 4)), y: p.y }));
       },
       onPanResponderTerminationRequest: () => true,
     })
@@ -240,32 +235,35 @@ export default function DraggableResizableChart({
       const min = Math.min(...s.values);
       const max = Math.max(...s.values);
       if (!isFinite(min) || !isFinite(max) || max === min) {
-        return s.values.map(() => 50);
+        if (!isFinite(min) || !isFinite(max) || max === min) {
+  return s.values.map(() => 50);
+}
+
       }
       return s.values.map(v => ((v - min) / (max - min)) * 100);
     });
   }, [trimmed.series, scaleMode]);
 
-  // ✅ Saatleri sadece tam saatlerde göster
+  // ✅ Saat etiketleri sadece tam saatlerde
   const series = useMemo(() => {
-  return normalized.map((vals, si) =>
-    vals.map((v, i) => {
-      const raw = trimmed.labels?.[i] ?? String(i);
-      const d = new Date(raw);
-      let hhmm = "";
-      if (!isNaN(d.getTime())) {
-        hhmm = d.getMinutes() === 0
-          ? `${d.getHours().toString().padStart(2, '0')}:00`
-          : "";
-      }
-      return {
-        value: Number.isFinite(v) ? v : 0,
-        label: hhmm, // 👈 artık eksende saat görünecek
-        _series: tags?.[si] ?? `Series ${si + 1}`,
-      };
-    })
-  );
-}, [normalized, trimmed, tags]);
+    return normalized.map((vals, si) =>
+      vals.map((v, i) => {
+        const raw = trimmed.labels?.[i] ?? String(i);
+        const d = new Date(raw);
+        let hhmm = "";
+        if (!isNaN(d.getTime())) {
+          hhmm = d.getMinutes() === 0
+            ? `${d.getHours().toString().padStart(2, '0')}:00`
+            : "";
+        }
+        return {
+          value: Number.isFinite(v) ? v : 0,
+          label: hhmm,
+          _series: tags?.[si] ?? `Series ${si + 1}`,
+        };
+      })
+    );
+  }, [normalized, trimmed, tags]);
 
   const allVals = useMemo(() => series.flat().map(p => p.value).filter(Number.isFinite), [series]);
   const { minY, maxY } = useMemo(() => {
@@ -320,32 +318,30 @@ export default function DraggableResizableChart({
     return Math.max(MIN_SPACING, ideal * SPACING_TIGHT_FACTOR);
   }, [innerW, trimmed.labels.length]);
 
-  // tooltip
-  // tooltip
-const renderPointerLabel = (items: { value: number; label?: string; datasetIndex?: number }[]) => {
-  if (!items || !items.length) return null;
-  const colorArr = [c1, c2, c3, c4].filter(Boolean) as string[];
-  return (
-    <View style={styles.tooltip}>
-      {items.map((it, idx) => {
-        const color = colorArr[(it?.datasetIndex ?? idx) % colorArr.length] || '#93C5FD';
-        const tagName = tags[(it?.datasetIndex ?? idx)] ?? `Series ${((it?.datasetIndex ?? idx) + 1)}`;
-        const valTxt =
-          scaleMode === 'minmax'
-            ? `${Number(it.value).toFixed(0)}`
-            : Number(it.value).toLocaleString('tr-TR');
-        return (
-          <View key={`pt-${idx}`} style={styles.tooltipRow}>
-            <View style={[styles.dot, { backgroundColor: color }]} />
-            <Text style={styles.tooltipTxt}>
-              {tagName}: <Text style={styles.tooltipVal}>{valTxt}</Text>
-            </Text>
-          </View>
-        );
-      })}
-    </View>
-  );
-};
+  const renderPointerLabel = (items: { value: number; label?: string; datasetIndex?: number }[]) => {
+    if (!items || !items.length) return null;
+    const colorArr = [c1, c2, c3, c4].filter(Boolean) as string[];
+    return (
+      <View style={styles.tooltip}>
+        {items.map((it, idx) => {
+          const color = colorArr[(it?.datasetIndex ?? idx) % colorArr.length] || '#93C5FD';
+          const tagName = tags[(it?.datasetIndex ?? idx)] ?? `Series ${((it?.datasetIndex ?? idx) + 1)}`;
+          const valTxt =
+            scaleMode === 'minmax'
+              ? `${Number(it.value).toFixed(0)}`
+              : Number(it.value).toLocaleString('tr-TR');
+          return (
+            <View key={`pt-${idx}`} style={styles.tooltipRow}>
+              <View style={[styles.dot, { backgroundColor: color }]} />
+              <Text style={styles.tooltipTxt}>
+                {tagName}: <Text style={styles.tooltipVal}>{valTxt}</Text>
+              </Text>
+            </View>
+          );
+        })}
+      </View>
+    );
+  };
 
   const ChartCard = (
     <View
@@ -353,9 +349,13 @@ const renderPointerLabel = (items: { value: number; label?: string; datasetIndex
       onLayout={(e) => {
         if (isDocked) {
           const w = e.nativeEvent.layout.width;
+          const h = e.nativeEvent.layout.height;
           if (w && (containerW === 0 || Math.abs(w - containerW) > 1)) {
             setContainerW(clamp(w, MIN_W, maxW));
             if (!ready) setReady(true);
+          }
+          if (h && (chartH === 0 || Math.abs(h - chartH) > 1)) {
+            setChartH(clamp(h - 40, MIN_H, MAX_H));
           }
         }
       }}
@@ -389,12 +389,17 @@ const renderPointerLabel = (items: { value: number; label?: string; datasetIndex
       )}
 
       <View
-        style={[styles.chartWrap, variant === 'fill' ? { marginTop: 0, width: '100%', height: chartH } : { width: innerW }]}
+        style={[
+          styles.chartWrap,
+          variant === 'fill'
+            ? { marginTop: 0, width: '100%', height: chartH }
+            : { width: innerW, height: chartH }
+        ]}
         {...((isFloating || (isDocked && pinchEnabledInDocked)) ? pinchResponder.panHandlers : {})}
       >
         {ready && (
           <LineChart
-            curved={curved}
+            curved
             thickness={2}
             color1={c1}
             color2={c2}
@@ -404,6 +409,9 @@ const renderPointerLabel = (items: { value: number; label?: string; datasetIndex
             data2={series[1]}
             data3={series[2]}
             data4={series[3]}
+            xAxisLabelTexts={labels}   
+            width={containerW - 20}
+            height={chartH - 20}
             areaChart={false}
             startFillColor="transparent"
             endFillColor="transparent"
@@ -474,8 +482,6 @@ const styles = StyleSheet.create({
     borderColor:'rgba(148,163,184,0.3)' 
   },
   chartWrap:{ marginTop:6 },
-  
-  // ✅ Tooltip kutusu
   tooltip:{
     backgroundColor:TOKENS.tooltipBg,
     padding:10,
@@ -491,7 +497,7 @@ const styles = StyleSheet.create({
   },
   tooltipArrow:{
     position:'absolute',
-    bottom:-6, // kutunun altına taşacak
+    bottom:-6,
     left:'50%',
     marginLeft:-6,
     width:0,
@@ -503,10 +509,10 @@ const styles = StyleSheet.create({
     backgroundColor:'transparent',
     borderLeftColor:'transparent',
     borderRightColor:'transparent',
-    borderTopColor:TOKENS.tooltipBg, // kutu ile aynı renk
+    borderTopColor:TOKENS.tooltipBg,
   },
   tooltipRow:{ flexDirection:'row', alignItems:'center', marginBottom:3 },
   dot:{ width:10, height:10, borderRadius:5, marginRight:6 },
   tooltipTxt:{ fontSize:12, color:'#e2e8f0' },
-  tooltipVal:{ fontWeight:'700', color:'#facc15' }, // sarı highlight
+  tooltipVal:{ fontWeight:'700', color:'#facc15' },
 });

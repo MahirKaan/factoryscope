@@ -5,14 +5,13 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useRef, useState } from 'react';
 import {
-    Alert,
-    Animated,
-    LayoutRectangle,
-    Pressable,
-    StyleSheet,
-    Text,
-    View,
-    ViewStyle,
+  Alert,
+  Animated,
+  LayoutRectangle,
+  Pressable,
+  StyleSheet,
+  Text,
+  View
 } from 'react-native';
 
 import DraggableResizableChart from '../components/charts/DraggableResizableChart';
@@ -20,6 +19,9 @@ import ChartSettingsModal from '../components/ChartSettingsModal';
 import SaveTemplateModal from '../components/SaveTemplateModal';
 import { mockChartData } from '../mock/mockChartData';
 import { getTemplate, saveNewTemplate, TemplateSnapshot } from '../storage/savedTemplates';
+
+// ✅ Yeni eklenen component
+import TagBox from '../components/TagBox';
 
 type ChartConfig = {
   id: string;
@@ -302,6 +304,12 @@ export default function Template1Screen() {
         )}
         scrollEventThrottle={16}
       >
+        {/* SLOT 1 üstüne iki kutu */}
+        <View style={{ flexDirection: 'row', gap: 12 }}>
+          <TagBox title="Kutucuk 1" />
+          <TagBox title="Kutucuk 2" />
+        </View>
+
         <SlotBox
           title="SLOT 1"
           highlight={hoveredSlot==='slot1'}
@@ -333,6 +341,12 @@ export default function Template1Screen() {
             );
           })()}
         </SlotBox>
+
+        {/* SLOT 1 ile SLOT 2 arasına iki kutu */}
+        <View style={{ flexDirection: 'row', gap: 12 }}>
+          <TagBox title="Ara Kutucuk 1" />
+          <TagBox title="Ara Kutucuk 2" />
+        </View>
 
         <SlotBox
           title="SLOT 2"
@@ -432,142 +446,64 @@ const SlotBox = ({
       ref={outerRef}
       style={[
         styles.slotOuter,
-        highlight ? styles.slotOuterHighlight : undefined,
+        highlight ? styles.slotHighlight : null,
       ]}
-      onLayout={() => outerRef.current?.measureInWindow?.((x,y,w,h)=>onLayoutRect?.({x,y,width:w,height:h}))}
+      onLayout={(e)=>{
+        outerRef.current?.measure((x,y,w,h,pageX,pageY)=>{
+          onLayoutRect?.({ x:pageX,y:pageY,width:w,height:h });
+        });
+        onBodyHeight?.(e.nativeEvent.layout.height);
+      }}
     >
       <View style={styles.slotHeader}>
-        <Feather name="grid" size={16} color="#60A5FA" />
-        <Text style={styles.slotHeaderText}>  {title}</Text>
-        {children ? (
-          <View style={{ marginLeft:'auto', flexDirection:'row' }}>
-            <Pressable onPress={onEdit} style={{ padding:6, marginRight:6 }}>
-              <Feather name="edit-2" size={16} color="#93C5FD" />
-            </Pressable>
-            <Pressable onPress={onUndock} style={{ padding:6 }}>
-              <Feather name="external-link" size={16} color="#93C5FD" />
-            </Pressable>
-          </View>
-        ) : null}
+        <Text style={styles.slotTitle}>{title}</Text>
+        {onEdit && <Pressable onPress={onEdit} style={styles.slotHeaderBtn}>
+          <Feather name="edit-3" size={14} color={TOKENS.textSecondary} />
+        </Pressable>}
+        {onUndock && <Pressable onPress={onUndock} style={styles.slotHeaderBtn}>
+          <Feather name="arrow-up-right" size={14} color={TOKENS.textSecondary} />
+        </Pressable>}
       </View>
-
-      <View
-        style={[
-          styles.slotBody,
-          children ? ({ padding: 0 } as ViewStyle) : undefined,
-        ]}
-        onLayout={(e)=>onBodyHeight?.(e.nativeEvent.layout.height)}
-      >
-        {children ? (
-          children
-        ) : (
-          <View style={[styles.dropHint, highlight && { borderColor: TOKENS.accentDeep, backgroundColor: 'rgba(56,189,248,0.08)' }]}>
-            <Feather name="move" size={20} color="#64748B" />
-            <Text style={styles.dropHintText}>Grafiği buraya bırak</Text>
-            <Text style={styles.dropHintSub}>veya alttaki + ile oluştur</Text>
-          </View>
-        )}
-      </View>
+      <View style={styles.slotBody}>{children}</View>
     </View>
   );
 };
 
 /* ---------- Styles ---------- */
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: TOKENS.bg },
-
-  /* Header */
+  root: { flex:1, backgroundColor:TOKENS.bg },
   header: {
-    position: 'absolute',
-    left: 0, right: 0, top: 0,
-    zIndex: 10,
-    paddingTop: 16,
-    paddingHorizontal: 14,
-    justifyContent: 'flex-end',
-    shadowColor:'#000',
-    shadowRadius: 12,
-    shadowOffset:{ width:0, height:6 },
+    position:'absolute', top:0, left:0, right:0,
+    zIndex:30, elevation:30,
+    justifyContent:'flex-end', paddingHorizontal:16, paddingBottom:12,
+    shadowColor:'#000', shadowOffset:{ width:0, height:2 }, shadowRadius:6,
   },
-  topGlow: {
-    position:'absolute', height:220, left:-50, right:-50, top:-40,
-    borderBottomLeftRadius:300, borderBottomRightRadius:300,
-  },
-  title: {
-    color:'#E0F2FE',
-    fontWeight:'800',
-    letterSpacing:0.5,
-  },
-  headerActionsBar: {
-    alignSelf: 'flex-end',
-    flexDirection: 'row',
-    gap: 10,
-    padding: 6,
-    paddingRight: 12,
-    marginTop: 8,
-    marginBottom: 10,
-    backgroundColor: 'rgba(2,6,23,0.55)',
-    borderWidth: 1,
-    borderColor: 'rgba(148,163,184,0.20)',
-    borderRadius: 14,
-  },
+  topGlow: { height:HEADER_EXPANDED*0.66, opacity:0.8 },
+  title: { fontWeight:'700', color:TOKENS.textPrimary },
+  headerActionsBar: { flexDirection:'row', alignItems:'center', marginTop:8, gap:8 },
   actionBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    height: 34,
-    paddingHorizontal: 12,
-    borderRadius: 10,
+    flexDirection:'row', alignItems:'center',
+    paddingHorizontal:12, paddingVertical:8, borderRadius:8,
   },
-  actionPrimary: { backgroundColor: TOKENS.accent },
-  actionGhost: {
-    backgroundColor: 'rgba(30,41,59,0.65)',
-    borderWidth: 1,
-    borderColor: 'rgba(147,197,253,0.30)',
-  },
-  actionText: { fontSize: 13, fontWeight: '900', letterSpacing: 0.2 },
-  actionPressed: { transform: [{ scale: 0.98 }], opacity: 0.9 },
-
-  /* FAB */
+  actionPrimary: { backgroundColor:TOKENS.accent },
+  actionGhost: { backgroundColor:'rgba(125,211,252,0.12)', borderWidth:1, borderColor:'rgba(125,211,252,0.4)' },
+  actionPressed: { opacity:0.75 },
+  actionText: { fontWeight:'600', fontSize:13, marginLeft:6 },
   fab: {
-    position:'absolute',
-    right:18, bottom:24,
+    position:'absolute', right:16, bottom:28, zIndex:20,
     width:56, height:56, borderRadius:28,
-    backgroundColor: TOKENS.accent,
-    alignItems:'center', justifyContent:'center',
-    shadowColor:'#000', shadowOpacity:0.28, shadowRadius:10, shadowOffset:{ width:0, height:8 }, elevation:8,
-    zIndex: 9,
+    backgroundColor:TOKENS.accent, justifyContent:'center', alignItems:'center',
+    shadowColor:'#000', shadowOpacity:0.3, shadowOffset:{ width:0, height:4 }, shadowRadius:6,
+    elevation:6,
   },
-
-  /* Scroll content */
-  scrollContainer: { paddingBottom:120, paddingHorizontal:14, gap:18 },
-
-  /* Slot */
+  scrollContainer: { paddingHorizontal:16, paddingBottom:80, gap:16 },
   slotOuter: {
-    minHeight: 360,
-    borderRadius: 24,
-    borderWidth: 1,
-    borderColor: TOKENS.stroke,
-    backgroundColor: TOKENS.surface,
-    overflow: 'hidden',
+    backgroundColor:TOKENS.surface, borderRadius:16, borderWidth:1, borderColor:TOKENS.stroke,
+    overflow:'hidden',
   },
-  slotOuterHighlight: {
-    borderColor: 'rgba(96,165,250,0.9)',
-    shadowColor:'#60A5FA',
-    shadowOpacity:0.25,
-    shadowRadius:10,
-    elevation:4,
-  },
-  slotHeader: {
-    height: 42, paddingHorizontal: 12, flexDirection:'row', alignItems:'center',
-    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: 'rgba(148,163,184,0.16)',
-  },
-  slotHeaderText: { color:'#BAE6FD', fontWeight:'800', fontSize:14, letterSpacing:1 },
-  slotBody: { flex: 1, padding: 10 },
-  dropHint: {
-    flex:1, borderRadius:20, borderWidth:1.5, borderStyle:'dashed',
-    borderColor:'rgba(148,163,184,0.28)', alignItems:'center', justifyContent:'center',
-    gap:4, backgroundColor:'rgba(2,6,23,0.18)',
-  },
-  dropHintText: { color:'#94A3B8', fontSize:13 },
-  dropHintSub: { color:'#64748B', fontSize:12 },
+  slotHighlight: { borderColor:TOKENS.accentDeep, borderWidth:2 },
+  slotHeader: { flexDirection:'row', alignItems:'center', paddingHorizontal:12, paddingVertical:8, borderBottomWidth:1, borderColor:TOKENS.strokeStrong },
+  slotTitle: { flex:1, fontWeight:'600', color:TOKENS.textPrimary, fontSize:15 },
+  slotHeaderBtn: { marginLeft:6, padding:4 },
+  slotBody: { padding:12, minHeight:120 },
 });

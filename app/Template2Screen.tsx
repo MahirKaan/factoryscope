@@ -1,39 +1,28 @@
-// app/Template2Screen.tsx
+// screens/Template1Screen.tsx
 import { Feather } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { LinearGradient } from 'expo-linear-gradient';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import React, { useRef, useState } from 'react';
 import {
-  Animated,
-  FlatList,
+  Alert,
   LayoutRectangle,
-  Modal,
-  PanResponder,
   Pressable,
-  ScrollView,
-  StatusBar,
   StyleSheet,
   Text,
-  TextInput,
-  TouchableOpacity,
-  View
+  View,
+  ViewStyle,
 } from 'react-native';
-import { LineChart } from 'react-native-gifted-charts';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-// Drag & Drop
-import { DragDropProvider, useDragDrop } from '../components/dragdrop/DragDropContext';
-import DropZone from '../components/dragdrop/DropZone';
-import type { Slot, SlotId } from '../components/dragdrop/types';
-
-// App bileşenleri
-import ChartSettingsModal from '../components/ChartSettingsModal';
 import DraggableResizableChart from '../components/charts/DraggableResizableChart';
+import ChartSettingsModal from '../components/ChartSettingsModal';
+import SaveTemplateModal from '../components/SaveTemplateModal';
 import { mockChartData } from '../mock/mockChartData';
+import { getTemplate, saveNewTemplate, TemplateSnapshot } from '../storage/savedTemplates';
 
-/* =========================
-   Types & Storage
-========================= */
+// ✅ Yeni eklenen component
+import TagBox from '../components/TagBox';
+
 type ChartConfig = {
   id: string;
   tags: string[];
@@ -43,25 +32,23 @@ type ChartConfig = {
   sampleType: string;
   color: string;
 };
+type SlotId = 'slot1' | 'slot2';
 
-// DraggableResizableChart dataset tipi
-type ChartDataset = { data: number[]; color: () => string };
-
-type ChartSlotId = 'chartA' | 'chartB';
-type LVSlotId = 'lv1' | 'lv2' | 'lv3' | 'lv4';
-
-type ChartFloat = { id: string; cfg: ChartConfig; x: number; y: number };
-
-type LastValueSettings = { tag: string; title: string };
-
-const STORAGE_KEY = 'template2_state_v4';
-
-/* =========================
-   Helpers
-========================= */
-const TAG_NAMES_RAW: string[] = Object.keys(mockChartData || {});
-const TAG_NAMES: string[] = [...TAG_NAMES_RAW].sort();
 const uid = () => Math.random().toString(36).slice(2);
+
+// Design tokens
+const TOKENS = {
+  bg: '#0B1120',
+  surface: 'rgba(2,6,23,0.35)',
+  stroke: 'rgba(148,163,184,0.22)',
+  strokeStrong: 'rgba(148,163,184,0.30)',
+  textPrimary: '#E6F0FF',
+  textSecondary: '#8FA3BF',
+  accent: '#7DD3FC',
+  accentDeep: '#38BDF8',
+};
+const HEADER_EXPANDED = 100;   // küçültüldü
+const HEADER_COLLAPSED = 52;   // küçültüldü
 
 const chartColors = [
   '#38BDF8', '#F472B6', '#34D399', '#FBBF24',
@@ -69,513 +56,65 @@ const chartColors = [
   '#F87171', '#818CF8', '#FDBA74',
 ];
 
-const TOKENS = {
-  bg: '#0b0f14',
-  surface: 'rgba(17,24,39,0.65)',
-  stroke: 'rgba(148,163,184,0.22)',
-  text: '#EAF2FF',
-  hint: '#7a8796',
-  accent: '#60A5FA',
-};
-
-// 🔒 DropZone kabul listesi – sabit referans
-const LV_ACCEPTS: ('lastValue')[] = ['lastValue'];
-
-// ---- helper: slotsSignature (sonsuz döngü koruması)
-const slotsSignature = (slots: Partial<Record<SlotId, Slot>> | null) => {
-  if (!slots) return 'null';
-  const entries = Object.entries(slots).sort(([a], [b]) => a.localeCompare(b));
-  return entries.map(([k, v]) => `${k}:${v?.widgetId ?? ''}`).join('|');
-};
-
-const generateTimeLabels = (start: string, end: string, freqInSec: number, limit = 500): string[] => {
-  const out: string[] = [];
+const generateTimeLabels = (start: string, end: string, freqInSec: number): string[] => {
+  const result: string[] = [];
   const s = new Date(start); const e = new Date(end);
-  if (isNaN(s.getTime()) || isNaN(e.getTime()) || freqInSec <= 0 || s > e) return out;
-  for (let t = s.getTime(); t <= e.getTime() && out.length < limit; t += freqInSec * 1000) {
-    out.push(new Date(t).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }));
+  if (isNaN(s.getTime()) || isNaN(e.getTime()) || freqInSec <= 0 || s > e) return result;
+  for (let t = s.getTime(); t <= e.getTime(); t += freqInSec * 1000) {
+    result.push(new Date(t).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }));
   }
-  return out;
+  return result;
 };
 
-const toChartProps = (cfg: ChartConfig) => {
-  const labels = generateTimeLabels(cfg.startTime, cfg.endTime, cfg.freq);
+export default function Template1Screen() {
+  const router = useRouter();
+  const { openSavedId } = useLocalSearchParams<{ openSavedId?: string }>();
 
-  if (!labels.length) {
-    return {
-      datasets: [] as ChartDataset[],
-      labels: [] as string[],
-    };
-  }
-
-  const datasets: ChartDataset[] = cfg.tags.map((tag, i) => {
-    const rawValues = mockChartData[tag]?.values || [];
-    const safe = Array.from({ length: Math.min(labels.length, rawValues.length) }).map((_, j) => {
-      const v = rawValues[j]; return (typeof v === 'number' && isFinite(v)) ? v : 0;
-    });
-    return { data: safe, color: () => chartColors[i % chartColors.length] };
+  const [slots, setSlots] = useState<{ slot1: ChartConfig | null; slot2: ChartConfig | null }>({
+    slot1: null, slot2: null,
   });
-
-  return { datasets, labels };
-};
-
-const fmtTime = (d?: number | null) => {
-  if (!d) return '—';
-  const dt = new Date(d);
-  const hh = String(dt.getHours()).padStart(2, '0');
-  const mm = String(dt.getMinutes()).padStart(2, '0');
-  return `${hh}:${mm}`;
-};
-
-/* =========================
-   Tag + Title Picker (LV)
-========================= */
-const TagPickerModal: React.FC<{
-  visible: boolean;
-  defaultTitle?: string;
-  defaultTag?: string;
-  onClose: () => void;
-  onApply: (payload: { tag: string; title: string }) => void;
-}> = ({ visible, defaultTitle = 'Last Value', defaultTag, onClose, onApply }) => {
-  const [q, setQ] = useState('');
-  const [title, setTitle] = useState(defaultTitle);
-  const [selected, setSelected] = useState<string | undefined>(defaultTag);
-
-  useEffect(() => {
-    if (visible) {
-      setQ('');
-      setTitle(defaultTitle);
-      setSelected(defaultTag);
-    }
-  }, [visible, defaultTitle, defaultTag]);
-
-  const filtered = useMemo(() => TAG_NAMES.filter((t) => t.toLowerCase().includes(q.toLowerCase())), [q]);
-
-  return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <View style={styles.modalBackdrop}>
-        <View style={styles.pickerCard}>
-          <Text style={styles.modalTitle}>Kartı Düzenle</Text>
-
-          <Text style={styles.fieldLabel}>Görünecek Ad</Text>
-          <TextInput
-            placeholder="Örn. Kompresör Sıcaklığı"
-            placeholderTextColor="#9aa0a6"
-            value={title}
-            onChangeText={setTitle}
-            style={styles.searchInput}
-          />
-
-          <Text style={[styles.fieldLabel, { marginTop: 8 }]}>Tag Seç</Text>
-          <TextInput
-            placeholder="CA_PRESSURE, VCM_TEMP..."
-            placeholderTextColor="#9aa0a6"
-            value={q}
-            onChangeText={setQ}
-            style={[styles.searchInput, { marginBottom: 8 }]}
-          />
-          <FlatList
-            data={filtered}
-            keyExtractor={(item) => item}
-            renderItem={({ item }) => (
-              <Pressable
-                style={[styles.pickerItem, selected === item && { backgroundColor: 'rgba(96,165,250,0.12)' }]}
-                onPress={() => setSelected(item)}
-              >
-                <Text style={styles.pickerItemText}>{item}</Text>
-              </Pressable>
-            )}
-            style={{ maxHeight: 220 }}
-          />
-
-          <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
-            <Pressable onPress={onClose} style={[styles.btn, { backgroundColor: '#334155' }]}>
-              <Text style={styles.btnText}>İptal</Text>
-            </Pressable>
-            <Pressable
-              onPress={() => {
-                if (selected) onApply({ tag: selected, title: title.trim() || 'Last Value' });
-                onClose();
-              }}
-              style={[styles.btn, { backgroundColor: '#2563eb', flex: 1 }]}
-            >
-              <Text style={styles.btnText}>Kaydet</Text>
-            </Pressable>
-          </View>
-        </View>
-      </View>
-    </Modal>
-  );
-};
-
-/* =========================
-   UI Parçaları (LV)
-========================= */
-const LastValueCardUI: React.FC<{
-  title: string;
-  tag?: string;
-  onEdit: () => void;
-  onClear: () => void;
-}> = ({ title, tag, onEdit, onClear }) => {
-  const val = (() => {
-    if (!tag) return undefined;
-    const rec = mockChartData[tag];
-    if (!rec || !rec.values || rec.values.length === 0) return undefined;
-    return rec.values[rec.values.length - 1];
-  })();
-  const [w, setW] = useState(0);
-
-  const raw = useMemo(() => {
-    if (!tag) return [] as number[];
-    return (mockChartData[tag]?.values ?? []).map((n) => (Number.isFinite(n) ? Number(n) : 0));
-  }, [tag]);
-  const min = useMemo(() => (raw.length ? Math.min(...raw) : 0), [raw]);
-  const max = useMemo(() => (raw.length ? Math.max(...raw) : 0), [raw]);
-  const pad = Math.max((max - min) * 0.1, 1);
-  const spark = raw.map((v) => ({ value: v - min + pad }));
-
-  return (
-    <View
-      style={styles.squareCard}
-      onLayout={(e) => {
-        const nw = e.nativeEvent.layout.width;
-        setW((prev) => (prev === nw ? prev : nw)); // layout loop guard
-      }}
-    >
-      <View style={styles.cardHeader}>
-        <Text style={styles.cardTitle}>{title}</Text>
-        <View style={styles.iconRow}>
-          <Pressable onPress={onEdit} hitSlop={8}>
-            <Text style={styles.iconText}>✏️</Text>
-          </Pressable>
-          <Pressable onPress={onClear} hitSlop={8}>
-            <Text style={[styles.iconText, { marginLeft: 8 }]}>🗑️</Text>
-          </Pressable>
-        </View>
-      </View>
-
-      <View style={[styles.lastValueBody, { paddingTop: 8 }]}>
-        {tag ? (
-          <>
-            <Text style={styles.lastValueNumber}>{val !== undefined ? String(val) : '—'}</Text>
-            <View style={{ width: '100%', marginTop: 12 }}>
-              {!!spark.length && (
-                <LineChart
-                  height={44}
-                  width={Math.max(120, w - 24)}
-                  data={spark}
-                  hideDataPoints
-                  hideRules
-                  thickness={2}
-                  curved={false}
-                  adjustToWidth
-                  endSpacing={0}
-                  initialSpacing={0}
-                  xAxisThickness={0}
-                  yAxisThickness={0}
-                  color={'#60A5FA'}
-                />
-              )}
-            </View>
-          </>
-        ) : (
-          <Text style={styles.placeholder}>Bir tag seçmek için düzenleyin</Text>
-        )}
-      </View>
-    </View>
-  );
-};
-
-/* =========================
-   SlotBox (Chart alanları)
-========================= */
-const ChartSlotBox = ({
-  title,
-  highlight,
-  onLayoutRect,
-  onBodyHeight,
-  onEdit,
-  onUndock,
-  children,
-}: {
-  title: string;
-  highlight?: boolean;
-  onLayoutRect?: (r: LayoutRectangle) => void;
-  onBodyHeight?: (h: number) => void;
-  onEdit?: () => void;
-  onUndock?: () => void;
-  children?: React.ReactNode;
-}) => {
-  const outerRef = useRef<View>(null);
-  return (
-    <View
-      ref={outerRef}
-      style={[styles.slotOuter, highlight ? styles.slotOuterHighlight : undefined]}
-      onLayout={() => outerRef.current?.measureInWindow?.((x,y,w,h)=>onLayoutRect?.({x,y,width:w,height:h}))}
-    >
-      <View style={styles.slotHeader}>
-        <Feather name="grid" size={16} color="#60A5FA" />
-        <Text style={styles.slotHeaderText}>  {title}</Text>
-        {children ? (
-          <View style={{ marginLeft:'auto', flexDirection:'row' }}>
-            <Pressable onPress={onEdit} style={{ padding:6, marginRight:6 }}>
-              <Feather name="edit-2" size={16} color="#93C5FD" />
-            </Pressable>
-            <Pressable onPress={onUndock} style={{ padding:6 }}>
-              <Feather name="external-link" size={16} color="#93C5FD" />
-            </Pressable>
-          </View>
-        ) : null}
-      </View>
-
-      <View style={[styles.slotBody, children ? { padding: 0 } : undefined]} onLayout={(e)=>onBodyHeight?.(e.nativeEvent.layout.height)}>
-        {children ? (
-          children
-        ) : (
-          <View style={[styles.dropHint, highlight && { borderColor: '#60A5FA', backgroundColor: 'rgba(56,189,248,0.08)' }]}>
-            <Feather name="move" size={20} color="#64748B" />
-            <Text style={styles.dropHintText}>Grafiği buraya bırak</Text>
-            <Text style={styles.dropHintSub}>veya alttaki + ile oluştur</Text>
-          </View>
-        )}
-      </View>
-    </View>
-  );
-};
-
-/* =========================
-   LV Drag Overlay (ghost) — SADECE GÖRSEL
-========================= */
-const LVDragOverlay: React.FC<{
-  visible: boolean;
-  start: { x: number; y: number; w: number; h: number };
-  settings: LastValueSettings;
-  lockScroll: (v: boolean) => void;
-}> = ({ visible, start, settings, lockScroll }) => {
-  useEffect(() => {
-    if (visible) {
-      lockScroll(true);
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(()=>{});
-    } else {
-      lockScroll(false);
-    }
-  }, [visible, lockScroll]);
-
-  if (!visible) return null;
-
-  return (
-    <View
-      style={{
-        position: 'absolute',
-        left: start.x,
-        top: start.y,
-        width: start.w,
-        height: start.h,
-        zIndex: 999,
-        opacity: 0.98,
-      }}
-      pointerEvents="none"
-    >
-      <View style={styles.squareCard}>
-        <View style={styles.cardHeader}>
-          <Text style={styles.cardTitle}>{settings.title}</Text>
-        </View>
-        <View style={[styles.lastValueBody, { paddingTop: 8 }]}>
-          <Text style={styles.lastValueNumber}>
-            {(() => {
-              const rec = mockChartData[settings.tag];
-              if (!rec || !rec.values || rec.values.length === 0) return '—';
-              return String(rec.values[rec.values.length - 1]);
-            })()}
-          </Text>
-        </View>
-      </View>
-    </View>
-  );
-};
-
-/* =========================
-   Screen
-========================= */
-const Template2Screen: React.FC = () => {
-  const insets = useSafeAreaInsets();
-
-  const [pageTitle, setPageTitle] = useState('Template 2');
-  const [editingTitle, setEditingTitle] = useState(false);
-  const [titleInput, setTitleInput] = useState('Template 2');
-
-  // DragDrop (sadece LV hover ölçümü için)
-  const [initialSlots, setInitialSlots] = useState<Slot[] | null>(null);
-  const [latestSlots, setLatestSlots] = useState<Partial<Record<SlotId, Slot>> | null>(null);
-
-  // LV durumları — HER SLOT KENDİ ANAHTARINI TUTAR
-  const [lvSettings, setLVSettings] = useState<Record<string, LastValueSettings | null>>({});
-
-  // Chart
-  const [chartSlots, setChartSlots] = useState<{ chartA: ChartConfig | null; chartB: ChartConfig | null }>({ chartA: null, chartB: null });
-  const [floatingCharts, setFloatingCharts] = useState<ChartFloat[]>([]);
+  const [floating, setFloating] = useState<{ id: string; cfg: ChartConfig; x: number; y: number }[]>([]);
   const [modalVisible, setModalVisible] = useState(false);
   const [editDraft, setEditDraft] = useState<{ cfg: ChartConfig | null }>({ cfg: null });
 
-  // Slot ölçüm/hover (chart alanları)
-  const [slotRects, setSlotRects] = useState<Record<ChartSlotId, LayoutRectangle | null>>({ chartA: null, chartB: null });
-  const [slotHeights, setSlotHeights] = useState<Record<ChartSlotId, number>>({ chartA: 0, chartB: 0 });
-  const [hoveredSlot, setHoveredSlot] = useState<ChartSlotId | null>(null);
-  const lastHover = useRef<ChartSlotId | null>(null);
+  // Save modal
+  const [saveModal, setSaveModal] = useState<{ visible: boolean; defaultName: string }>({
+    visible: false, defaultName: '',
+  });
 
-  // Kayıt
-  const [lastSavedAt, setLastSavedAt] = useState<number | null>(null);
-  const [autosave, setAutosave] = useState(true);
-  const [showToast, setShowToast] = useState(false);
-  const [hydrated, setHydrated] = useState(false);
+  // slot measure + hover
+  const [slotRects, setSlotRects] = useState<Record<SlotId, LayoutRectangle | null>>({ slot1: null, slot2: null });
+  const [slotHeights, setSlotHeights] = useState<Record<SlotId, number>>({ slot1: 0, slot2: 0 });
+  const [hoveredSlot, setHoveredSlot] = useState<SlotId | null>(null);
+  const lastHover = useRef<SlotId | null>(null);
 
-  // 🔒 Scroll kilidi
-  const [scrollLocked, setScrollLocked] = useState(false);
+  const isInside = (r: LayoutRectangle | null, x: number, y: number) =>
+    !!r && x >= r.x && x <= r.x + r.width && y >= r.y && y <= r.y + r.height;
+  const whichZoneSync = (x: number, y: number): SlotId | null => {
+    if (isInside(slotRects.slot1, x, y)) return 'slot1';
+    if (isInside(slotRects.slot2, x, y)) return 'slot2';
+    return null;
+  };
 
-  // LV drag overlay state
-  const [dragLV, setDragLV] = useState<{
-    active: boolean;
-    from: LVSlotId;
-    widgetId: string;
-    settings: LastValueSettings;
-    x: number; y: number; w: number; h: number;
-  } | null>(null);
-
-  // ---- guards
-  const lastSlotsSigRef = useRef<string>('');   // DragDrop onChange guard
-  const lastSavedSigRef = useRef<string>('');   // Autosave guard
-
-  // Hover haptic (chart alanları için)
-  useEffect(() => {
+  React.useEffect(() => {
     if (hoveredSlot && hoveredSlot !== lastHover.current) {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(()=>{});
     }
     lastHover.current = hoveredSlot;
   }, [hoveredSlot]);
 
-  const isInside = (r: LayoutRectangle | null, x: number, y: number) => !!r && x >= r.x && x <= r.x + r.width && y >= r.y && y <= r.y + r.height;
-  const whichZoneSync = (x: number, y: number): ChartSlotId | null => {
-    if (isInside(slotRects.chartA, x, y)) return 'chartA';
-    if (isInside(slotRects.chartB, x, y)) return 'chartB';
-    return null;
-  };
-
-  /* ------------ LOAD ------------- */
-  useEffect(() => {
-    (async () => {
-      try {
-        const raw = await AsyncStorage.getItem(STORAGE_KEY);
-        if (raw) {
-          const parsed = JSON.parse(raw);
-
-          // LV slotlarını güvenli şekilde kur (sabit accepts referansı ile)
-          const restored: Slot[] = Array.isArray(parsed.slots)
-            ? (parsed.slots as Slot[])
-                .filter((s: Slot) => ['lv1','lv2','lv3','lv4'].includes(s.id))
-                .map((s: Slot) => ({
-                  id: s.id as LVSlotId,
-                  accepts: LV_ACCEPTS,
-                  widgetId: s.widgetId ?? (`lastValue:${s.id}`),
-                }))
-            : [
-                { id: 'lv1', accepts: LV_ACCEPTS, widgetId: 'lastValue:lv1' },
-                { id: 'lv2', accepts: LV_ACCEPTS, widgetId: 'lastValue:lv2' },
-                { id: 'lv3', accepts: LV_ACCEPTS, widgetId: 'lastValue:lv3' },
-                { id: 'lv4', accepts: LV_ACCEPTS, widgetId: 'lastValue:lv4' },
-              ];
-          setInitialSlots(restored);
-
-          setPageTitle(parsed.pageTitle ?? 'Template 2');
-          setTitleInput(parsed.pageTitle ?? 'Template 2');
-          setAutosave(parsed.autosave ?? true);
-
-          setLVSettings(parsed.lvSettings ?? {
-            'lastValue:lv1': null,
-            'lastValue:lv2': null,
-            'lastValue:lv3': null,
-            'lastValue:lv4': null,
-          });
-
-          if (parsed.chartSlots) setChartSlots(parsed.chartSlots);
-          if (parsed.floatingCharts) setFloatingCharts(parsed.floatingCharts);
-
-          setLastSavedAt(parsed.lastSavedAt ?? null);
-        } else {
-          // defaults
-          setInitialSlots([
-            { id: 'lv1', accepts: LV_ACCEPTS, widgetId: 'lastValue:lv1' },
-            { id: 'lv2', accepts: LV_ACCEPTS, widgetId: 'lastValue:lv2' },
-            { id: 'lv3', accepts: LV_ACCEPTS, widgetId: 'lastValue:lv3' },
-            { id: 'lv4', accepts: LV_ACCEPTS, widgetId: 'lastValue:lv4' },
-          ]);
-          setLVSettings({
-            'lastValue:lv1': null,
-            'lastValue:lv2': null,
-            'lastValue:lv3': null,
-            'lastValue:lv4': null,
-          });
-        }
-      } finally {
-        setHydrated(true);
-      }
-    })();
-  }, []);
-
-  /* ------------ SAVE ------------- */
-  const saveState = async (slots: Partial<Record<SlotId, Slot>> | null, fromAutosave = false) => {
-    const slotsArr: Slot[] = slots ? Object.values(slots) : (initialSlots ?? []);
-    const payload = {
-      pageTitle,
-      autosave,
-      slots: slotsArr,
-      lvSettings,
-      chartSlots,
-      floatingCharts,
-      lastSavedAt: Date.now(),
-    };
-    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
-    setLastSavedAt(payload.lastSavedAt);
-    if (fromAutosave) {
-      setShowToast(true);
-      setTimeout(() => setShowToast(false), 1200);
-    }
-  };
-
-  // Chart/LV/slot state değişince autosave (guard ile)
-  useEffect(() => {
-    if (!autosave || !hydrated) return;
-    const sigSlots = slotsSignature(latestSlots);
-    const sigPayload =
-      sigSlots +
-      '|' + JSON.stringify(chartSlots) +
-      '|' + JSON.stringify(floatingCharts) +
-      '|' + JSON.stringify(lvSettings);
-
-    if (sigPayload === lastSavedSigRef.current) return;
-    lastSavedSigRef.current = sigPayload;
-    saveState(latestSlots, true);
-  }, [autosave, hydrated, latestSlots, chartSlots, floatingCharts, lvSettings]);
-
-  // ⛔️ Guard — buradan sonra HOOK yok!
-  if (!initialSlots) return <View style={{ flex: 1, backgroundColor: TOKENS.bg }} />;
-
-  /* ------------ CHART handlers ------------- */
   const onPlus = () => { setEditDraft({ cfg: null }); setModalVisible(true); };
 
-  type ChartSettingsForm = {
-    tags: string[]; startTime: string; endTime: string; freq: number; sampleType: string;
-  };
-
-  const handleApplySettings = (settings: ChartSettingsForm, editingId?: string) => {
+  const handleApplySettings = (settings: any, editingId?: string) => {
     const { tags, startTime, endTime, freq, sampleType } = settings;
     if (!startTime || !endTime || !sampleType || !freq || !Array.isArray(tags) || !tags.length) {
-      alert('Lütfen tüm alanları doldurun.'); return;
+      Alert.alert('Eksik bilgi', 'Lütfen tüm alanları doldurun.'); return;
     }
 
     if (editingId) {
-      setChartSlots(prev => {
+      setSlots(prev => {
         const p = { ...prev };
-        (['chartA','chartB'] as ChartSlotId[]).forEach(sid => {
+        (['slot1','slot2'] as SlotId[]).forEach(sid => {
           if (p[sid]?.id === editingId) p[sid] = { ...(p[sid] as ChartConfig), tags, startTime, endTime, freq, sampleType };
         });
         return p;
@@ -589,722 +128,352 @@ const Template2Screen: React.FC = () => {
       color: chartColors[Math.floor(Math.random() * chartColors.length)],
     };
     const spawnX = 16;
-    const spawnY = Math.max(140, insets.top + 96);
-    setFloatingCharts(prev => [...prev, { id: cfg.id, cfg, x: spawnX, y: spawnY }]);
+    const spawnY = HEADER_EXPANDED + 12;
+    setFloating(prev => [...prev, { id: cfg.id, cfg, x: spawnX, y: spawnY }]);
     setModalVisible(false);
   };
 
-  const attachToSlot = (chartId: string, zone: ChartSlotId) => {
-    const item = floatingCharts.find(f => f.id === chartId); if (!item) return;
-    setChartSlots(p => ({ ...p, [zone]: item.cfg }));
-    setFloatingCharts(prev => prev.filter(f => f.id !== chartId));
+  const attachToSlot = (chartId: string, zone: SlotId) => {
+    const item = floating.find(f => f.id === chartId); if (!item) return;
+    setSlots(p => ({ ...p, [zone]: item.cfg }));
+    setFloating(prev => prev.filter(f => f.id !== chartId));
     setHoveredSlot(null);
   };
+  const removeFromSlot = (zone: SlotId) => setSlots(p => ({ ...p, [zone]: null }));
 
-  const removeFromSlot = (zone: ChartSlotId) => setChartSlots(p => ({ ...p, [zone]: null }));
+  const toChartProps = (cfg: ChartConfig) => {
+    const labels = generateTimeLabels(cfg.startTime, cfg.endTime, cfg.freq);
+    const datasets = cfg.tags.map((tag, i) => {
+      const rawValues = mockChartData[tag]?.values || [];
+      const safe = Array.from({ length: Math.min(labels.length, rawValues.length) }).map((_, j) => {
+        const v = rawValues[j]; return (typeof v === 'number' && isFinite(v)) ? v : 0;
+      });
+      return { data: safe, color: () => chartColors[i % chartColors.length] };
+    });
+    return { datasets, labels };
+  };
 
-  const undockFromSlot = (sid: ChartSlotId) => {
-    const cfg = chartSlots[sid]; if (!cfg) return;
-    setFloatingCharts(prev => [...prev, { id: cfg.id, cfg, x: 16, y: Math.max(140, insets.top + 96) }]);
+  const undockFromSlot = (sid: SlotId) => {
+    const cfg = slots[sid]; if (!cfg) return;
+    setFloating(prev => [...prev, { id: cfg.id, cfg, x: 16, y: HEADER_EXPANDED + 12 }]);
     removeFromSlot(sid);
   };
 
-  /* ------------ LV drag helpers ------------- */
-  const widgetKey = (sid: LVSlotId) => `lastValue:${sid}` as const;
-
-  const beginLVDrag = (payload: {
-    from: LVSlotId;
-    widgetId: string;
-    settings: LastValueSettings;
-    frame: { x: number; y: number; width: number; height: number };
-  }) => {
-    setDragLV({
-      active: true,
-      from: payload.from,
-      widgetId: payload.widgetId,
-      settings: payload.settings,
-      x: payload.frame.x,
-      y: payload.frame.y,
-      w: payload.frame.width,
-      h: payload.frame.height,
-    });
-  };
-
-  // LV kartını sürüklerken hayaletin pozisyonunu güncelle
-  const moveLVGhost = (x: number, y: number) => {
-    setDragLV(prev => (prev ? { ...prev, x, y } : prev));
-  };
-
-  const completeLVDrag = (target: LVSlotId | null) => {
-    const current = dragLV;
-    setDragLV(null);
-    if (!target || !current) return;
-
-    setLVSettings(prev => {
-      const next = { ...prev };
-      const srcKey = widgetKey(current.from);
-      const dstKey = widgetKey(target);
-      [next[srcKey], next[dstKey]] = [next[dstKey] ?? null, next[srcKey] ?? null];
-      return next;
-    });
-
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(()=>{});
-  };
+  // Saved template yükleme
+  React.useEffect(()=>{
+    if(!openSavedId) return;
+    (async ()=>{
+      const snap = await getTemplate(String(openSavedId));
+      if (snap?.state) {
+        setSlots(snap.state.slots ?? { slot1:null, slot2:null });
+        setFloating(snap.state.floating ?? []);
+      }
+    })();
+  },[openSavedId]);
 
   return (
-    <View style={{ flex: 1, backgroundColor: TOKENS.bg }}>
-      <DragDropProvider
-  initialSlots={initialSlots ?? undefined}
-  setScrollLocked={setScrollLocked}
-  onChange={(slots: Partial<Record<SlotId, Slot>> | null) => {
-    const sig = slotsSignature(slots);
-    if (sig === lastSlotsSigRef.current) return;
-    lastSlotsSigRef.current = sig;
-    setLatestSlots(slots);
-  }}
->
-        {/* Header */}
-        <Header
-          insetsTop={insets.top}
-          pageTitle={pageTitle}
-          setPageTitle={setPageTitle}
-          editingTitle={editingTitle}
-          setEditingTitle={setEditingTitle}
-          titleInput={titleInput}
-          setTitleInput={setTitleInput}
-          autosave={autosave}
-          setAutosave={setAutosave}
-          onManualSave={(slots)=> saveState(slots, false)}
-          lastSavedAt={lastSavedAt}
-        />
+    <View style={styles.root}>
+      {/* Header */}
+      <View style={[styles.header, { height: HEADER_EXPANDED }]}>
+        <LinearGradient colors={[TOKENS.bg, TOKENS.bg]} style={StyleSheet.absoluteFill} />
+        <Text style={styles.title}>Template 1</Text>
+        <View style={styles.headerActionsBar}>
+          <Pressable
+            onPress={()=>{
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(()=>{});
+              const defaultName = `Template1 - ${new Date().toLocaleTimeString('tr-TR',{hour:'2-digit',minute:'2-digit'})}`;
+              setSaveModal({ visible:true, defaultName });
+            }}
+            style={({pressed})=>[styles.actionBtn, styles.actionPrimary, pressed && styles.actionPressed]}
+          >
+            <Feather name="save" size={16} color="#0B1120" />
+            <Text style={[styles.actionText, { color:'#0B1120' }]}>Kaydet</Text>
+          </Pressable>
 
-        {/* + FAB */}
-        <Pressable
-          onPress={onPlus}
-          style={({ pressed }) => [styles.fab, pressed && { transform:[{ scale:0.98 }], opacity:0.95 }]}
-          accessibilityRole="button"
-          accessibilityLabel="Yeni grafik ekle"
-        >
-          <Feather name="plus" size={22} color="#0B1120" />
-        </Pressable>
+          <Pressable
+            onPress={()=>router.push('/saved-templates')}
+            style={({pressed})=>[styles.actionBtn, styles.actionGhost, pressed && styles.actionPressed]}
+          >
+            <Feather name="folder" size={16} color="#BAE6FD" />
+            <Text style={[styles.actionText, { color:'#BAE6FD' }]}>Kayıtlar</Text>
+          </Pressable>
+        </View>
+      </View>
 
-        {/* Floating charts */}
-        {floatingCharts.map(f => {
-          const p = toChartProps(f.cfg);
-          return (
-            <View key={f.id} style={StyleSheet.absoluteFill} pointerEvents="box-none">
-              <View style={{ position:'absolute', left:f.x, top:f.y, right:0 }} pointerEvents="box-none">
-                <DraggableResizableChart
-                  data={p.datasets}
-                  labels={p.labels}
-                  tags={p.datasets.length ? f.cfg.tags : []}
-                  sampleType={f.cfg.sampleType}
-                  freq={f.cfg.freq}
-                  mode="floating"
-                  initialPosition={{ x:f.x, y:f.y }}
-                  onDelete={() => setFloatingCharts(prev => prev.filter(x => x.id !== f.id))}
-                  onDropGesture={({absX,absY}) => {
-                    const z = whichZoneSync(absX,absY);
-                    return Promise.resolve(z === 'chartA' ? 'slot1' : z === 'chartB' ? 'slot2' : null);
-                  }}
-                  onDrop={(zoneId) => {
-                    if (!zoneId) { setHoveredSlot(null); return; }
-                    attachToSlot(f.id, zoneId === 'slot1' ? 'chartA' : 'chartB');
-                  }}
-                  onDragMove={({absX,absY}) => setHoveredSlot(whichZoneSync(absX,absY))}
-                />
-              </View>
+      {/* FAB */}
+      <Pressable
+        onPress={onPlus}
+        style={({ pressed }) => [styles.fab, pressed && { transform:[{ scale:0.98 }], opacity:0.95 }]}
+      >
+        <Feather name="plus" size={22} color="#0B1120" />
+      </Pressable>
+
+      {/* Floating charts */}
+      {floating.map(f => {
+        const p = toChartProps(f.cfg);
+        return (
+          <View key={f.id} style={StyleSheet.absoluteFill} pointerEvents="box-none">
+            <View style={{ position:'absolute', left:f.x, top:f.y, right:0 }} pointerEvents="box-none">
+              <DraggableResizableChart
+                data={p.datasets}
+                labels={p.labels}
+                tags={f.cfg.tags}
+                sampleType={f.cfg.sampleType}
+                freq={f.cfg.freq}
+                mode="floating"
+                initialPosition={{ x:f.x, y:f.y }}
+                onDelete={() => setFloating(prev => prev.filter(x => x.id !== f.id))}
+                onDropGesture={({absX,absY}) => Promise.resolve(whichZoneSync(absX,absY))}
+                onDrop={(zoneId) => attachToSlot(f.id, zoneId)}
+                onDragMove={({absX,absY}) => setHoveredSlot(whichZoneSync(absX,absY))}
+              />
             </View>
-          );
-        })}
+          </View>
+        );
+      })}
 
-        {/* LV Drag overlay (sadece görsel) */}
-        <LVDragOverlay
-          visible={!!dragLV}
-          start={{ x: dragLV?.x ?? 0, y: dragLV?.y ?? 0, w: dragLV?.w ?? 0, h: dragLV?.h ?? 0 }}
-          settings={dragLV?.settings ?? { title:'', tag: '' }}
-          lockScroll={setScrollLocked}
-        />
+      {/* Content - tek ekran */}
+      <View style={[styles.scrollContainer, { paddingTop: HEADER_EXPANDED + 4 }]}>
+        <View style={{ flexDirection: 'row', gap: 6 }}>
+          <TagBox title="Kutucuk 1" />
+          <TagBox title="Kutucuk 2" />
+        </View>
 
-        {/* İçerik */}
-        <ScrollView
-          style={styles.container}
-          contentContainerStyle={styles.content}
-          scrollEnabled={!scrollLocked}
-          keyboardShouldPersistTaps="handled"
+        <SlotBox
+          title="SLOT 1"
+          highlight={hoveredSlot==='slot1'}
+          onLayoutRect={(r)=>setSlotRects(p=>({...p,slot1:r}))}
+          onBodyHeight={(h)=>setSlotHeights(p=>({...p,slot1:h}))}
+          onEdit={()=>{
+            const c = slots.slot1; if(!c) return;
+            setEditDraft({ cfg:c }); setModalVisible(true);
+          }}
+          onUndock={()=>undockFromSlot('slot1')}
         >
-          {/* LV Row 1 */}
-          <View style={styles.row}>
-            <LVSlot
-              id="lv1"
-              lvSettings={lvSettings}
-              setLVSettings={setLVSettings}
-              onBeginDrag={beginLVDrag}
-              onMoveGhost={moveLVGhost}
-              onCompleteDrag={completeLVDrag}
-              draggingFrom={dragLV?.from ?? null}
-            />
-            <LVSlot
-              id="lv2"
-              lvSettings={lvSettings}
-              setLVSettings={setLVSettings}
-              onBeginDrag={beginLVDrag}
-              onMoveGhost={moveLVGhost}
-              onCompleteDrag={completeLVDrag}
-              draggingFrom={dragLV?.from ?? null}
-            />
-          </View>
+          {slots.slot1 && (() => {
+            const p = toChartProps(slots.slot1!);
+            const cfg = slots.slot1!;
+            return (
+              <DraggableResizableChart
+                data={p.datasets}
+                labels={p.labels}
+                tags={cfg.tags}
+                sampleType={cfg.sampleType}
+                freq={cfg.freq}
+                mode="docked"
+                // ⚡ Docked iken tam görünsün diye compact kaldırıldı
+                variant="fill"
+                idealHeight={slotHeights.slot1||0}
+                onDelete={() => removeFromSlot('slot1')}
+                onRequestUndock={()=>undockFromSlot('slot1')}
+              />
+            );
+          })()}
+        </SlotBox>
 
-          {/* CHART SLOT A */}
-          <ChartSlotBox
-            title="CHART SLOT A"
-            highlight={hoveredSlot==='chartA'}
-            onLayoutRect={(r)=>setSlotRects(p=>({...p,chartA:r}))}
-            onBodyHeight={(h)=>setSlotHeights(p=>({...p,chartA:h}))}
-            onEdit={()=>{ const c = chartSlots.chartA; if(!c) return; setEditDraft({ cfg:c }); setModalVisible(true); }}
-            onUndock={()=>undockFromSlot('chartA')}
-          >
-            {chartSlots.chartA && (()=>{
-              const p = toChartProps(chartSlots.chartA!);
-              const cfg = chartSlots.chartA!;
-              return (
-                <DraggableResizableChart
-                  data={p.datasets}
-                  labels={p.labels}
-                  tags={cfg.tags}
-                  sampleType={cfg.sampleType}
-                  freq={cfg.freq}
-                  mode="docked"
-                  variant="card"
-                  compact
-                  idealHeight={slotHeights.chartA||0}
-                  onDelete={() => removeFromSlot('chartA')}
-                  onRequestUndock={()=>undockFromSlot('chartA')}
-                />
-              );
-            })()}
-          </ChartSlotBox>
+        <View style={{ flexDirection: 'row', gap: 6 }}>
+          <TagBox title="Ara Kutucuk 1" />
+          <TagBox title="Ara Kutucuk 2" />
+        </View>
 
-          {/* LV Row 2 */}
-          <View style={styles.row}>
-            <LVSlot
-              id="lv3"
-              lvSettings={lvSettings}
-              setLVSettings={setLVSettings}
-              onBeginDrag={beginLVDrag}
-              onMoveGhost={moveLVGhost}
-              onCompleteDrag={completeLVDrag}
-              draggingFrom={dragLV?.from ?? null}
-            />
-            <LVSlot
-              id="lv4"
-              lvSettings={lvSettings}
-              setLVSettings={setLVSettings}
-              onBeginDrag={beginLVDrag}
-              onMoveGhost={moveLVGhost}
-              onCompleteDrag={completeLVDrag}
-              draggingFrom={dragLV?.from ?? null}
-            />
-          </View>
+        <SlotBox
+          title="SLOT 2"
+          highlight={hoveredSlot==='slot2'}
+          onLayoutRect={(r)=>setSlotRects(p=>({...p,slot2:r}))}
+          onBodyHeight={(h)=>setSlotHeights(p=>({...p,slot2:h}))}
+          onEdit={()=>{
+            const c = slots.slot2; if(!c) return;
+            setEditDraft({ cfg:c }); setModalVisible(true);
+          }}
+          onUndock={()=>undockFromSlot('slot2')}
+        >
+          {slots.slot2 && (() => {
+            const p = toChartProps(slots.slot2!);
+            const cfg = slots.slot2!;
+            return (
+              <DraggableResizableChart
+                data={p.datasets}
+                labels={p.labels}
+                tags={cfg.tags}
+                sampleType={cfg.sampleType}
+                freq={cfg.freq}
+                mode="docked"
+                variant="fill"
+                idealHeight={slotHeights.slot2||0}
+                onDelete={() => removeFromSlot('slot2')}
+                onRequestUndock={()=>undockFromSlot('slot2')}
+              />
+            );
+          })()}
+        </SlotBox>
+      </View>
 
-          {/* CHART SLOT B */}
-          <ChartSlotBox
-            title="CHART SLOT B"
-            highlight={hoveredSlot==='chartB'}
-            onLayoutRect={(r)=>setSlotRects(p=>({...p,chartB:r}))}
-            onBodyHeight={(h)=>setSlotHeights(p=>({...p,chartB:h}))}
-            onEdit={()=>{ const c = chartSlots.chartB; if(!c) return; setEditDraft({ cfg:c }); setModalVisible(true); }}
-            onUndock={()=>undockFromSlot('chartB')}
-          >
-            {chartSlots.chartB && (()=>{
-              const p = toChartProps(chartSlots.chartB!);
-              const cfg = chartSlots.chartB!;
-              return (
-                <DraggableResizableChart
-                  data={p.datasets}
-                  labels={p.labels}
-                  tags={cfg.tags}
-                  sampleType={cfg.sampleType}
-                  freq={cfg.freq}
-                  mode="docked"
-                  variant="card"
-                  compact
-                  idealHeight={slotHeights.chartB||0}
-                  onDelete={() => removeFromSlot('chartB')}
-                  onRequestUndock={()=>undockFromSlot('chartB')}
-                />
-              );
-            })()}
-          </ChartSlotBox>
+      {/* Chart Settings */}
+      <ChartSettingsModal
+        visible={modalVisible}
+        onClose={() => setModalVisible(false)}
+        onApply={(payload)=>handleApplySettings(payload, editDraft.cfg?.id)}
+        tagOptions={Object.keys(mockChartData)}
+        editData={
+          editDraft?.cfg ? {
+            tags: editDraft.cfg.tags,
+            startTime: editDraft.cfg.startTime,
+            endTime: editDraft.cfg.endTime,
+            freq: editDraft.cfg.freq,
+            sampleType: editDraft.cfg.sampleType,
+          } : undefined
+        }
+      />
 
-          <View style={{ height: 120 }} />
-        </ScrollView>
-
-        {/* Chart Settings */}
-        <ChartSettingsModal
-          visible={modalVisible}
-          onClose={() => setModalVisible(false)}
-          onApply={(payload)=>handleApplySettings(payload as any, editDraft.cfg?.id)}
-          tagOptions={TAG_NAMES}
-
-         editData={
-  editDraft?.cfg
-    ? {
-        tags: editDraft.cfg.tags ?? [],
-        startTime: editDraft.cfg.startTime ?? null,
-        endTime: editDraft.cfg.endTime ?? null,
-        freq: editDraft.cfg.freq ?? null,
-        sampleType: editDraft.cfg.sampleType ?? null,
-      }
-    : undefined
+      {/* Save Modal */}
+      <SaveTemplateModal
+        visible={saveModal.visible}
+        defaultName={saveModal.defaultName}
+        onCancel={()=>setSaveModal({ visible:false, defaultName:'' })}
+        onSave={async (name)=>{
+          try{
+            const snapshot: TemplateSnapshot = {
+              id: uid(),
+              name,
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+              screen: 'Template1',
+              state: { slots, floating },
+            };
+            await saveNewTemplate(snapshot);
+            setSaveModal({ visible:false, defaultName:'' });
+            router.push('/saved-templates');
+          }catch(e){
+            Alert.alert('Hata','Kaydetme sırasında bir hata oluştu.');
+          }
+        }}
+      />
+    </View>
+  );
 }
 
-
-        />
-
-        {showToast && (
-          <View style={styles.toast}>
-            <Text style={styles.toastText}>✅ Kaydedildi</Text>
-          </View>
-        )}
-      </DragDropProvider>
-    </View>
-  );
-};
-
-export default Template2Screen;
-
-/* =========================
-   LV Slot (ikonla drag + bağımsız state)
-========================= */
-const LVSlot: React.FC<{
-  id: LVSlotId;
-  lvSettings: Record<string, LastValueSettings | null>;
-  setLVSettings: React.Dispatch<React.SetStateAction<Record<string, LastValueSettings | null>>>;
-  onBeginDrag: (p: { from: LVSlotId; widgetId: string; settings: LastValueSettings; frame: { x:number;y:number;width:number;height:number } }) => void;
-  onMoveGhost: (x: number, y: number) => void;
-  onCompleteDrag: (target: LVSlotId | null) => void;
-  draggingFrom: LVSlotId | null;
-}> = ({ id, lvSettings, setLVSettings, onBeginDrag, onMoveGhost, onCompleteDrag, draggingFrom }) => {
-  const { updateHover, hoveredSlotId, cancelDrag } = useDragDrop();
-  const [, force] = useState(0);
-  const [open, setOpen] = useState(false);
-
-  const glow = useRef(new Animated.Value(0)).current;
-  const cardRef = useRef<View>(null);
-
-  const widgetId = `lastValue:${id}`;
-  const settings = lvSettings[widgetId] ?? null;
-
-  const onApply = (payload: { tag: string; title: string }) => {
-    setLVSettings((prev) => ({ ...prev, [widgetId]: payload }));
-    force((v) => v + 1);
-  };
-  const onClear = () => {
-    setLVSettings((prev) => ({ ...prev, [widgetId]: null }));
-    force((v) => v + 1);
-  };
-
-  const setHover = (hover: boolean) => {
-    Animated.timing(glow, {
-      toValue: hover ? 1 : 0,
-      duration: 120,
-      useNativeDriver: false,
-    }).start();
-  };
-
-  // 🔧 DRAG — jestur doğrudan handle üzerinde başlar
-  const startXY = useRef<{x:number;y:number}>({x:0,y:0});
-  const handlePan = useRef(
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => !!settings, // boş kartta drag yok
-      onMoveShouldSetPanResponder: () => !!settings,
-      onPanResponderGrant: () => {
-        if (!settings) return;
-        cardRef.current?.measureInWindow?.((x, y, width, height) => {
-          startXY.current = { x, y };
-          onBeginDrag({
-            from: id,
-            widgetId,
-            settings,
-            frame: { x, y, width, height },
-          });
-          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(()=>{});
-        });
-      },
-      onPanResponderMove: (_e, g) => {
-        if (!settings) return;
-        const nx = startXY.current.x + g.dx;
-        const ny = startXY.current.y + g.dy;
-        onMoveGhost(nx, ny);                // hayaletin yeri
-        updateHover(g.moveX, g.moveY);      // drop hedefini güncelle
-      },
-      onPanResponderRelease: () => {
-        const target = (hoveredSlotId as LVSlotId | null) ?? null;
-        onCompleteDrag(target);
-        cancelDrag(); // hover/id state'ini temizle
-      },
-      onPanResponderTerminate: () => {
-        cancelDrag();
-        onCompleteDrag(null);
-      },
-      onPanResponderTerminationRequest: () => true,
-    })
-  ).current;
-
-  return (
-    <DropZone id={id} accepts={LV_ACCEPTS} style={styles.slotBare} onHoverChange={setHover}>
-      <Animated.View
-        ref={cardRef as any}
-        style={{
-          borderRadius: 18,
-          opacity: draggingFrom === id ? 0.35 : 1,
-        }}
-      >
-        {settings ? (
-          <View>
-            {/* Küçük sürükleme (handle) — PanResponder burada */}
-            <View style={{ position:'absolute', left:8, bottom:8, zIndex:10 }}>
-              <View
-                {...handlePan.panHandlers}
-                hitSlop={{ top:10, bottom:10, left:10, right:10 }}
-                style={{
-                  padding:6,
-                  borderRadius:10,
-                  backgroundColor:'rgba(148,163,184,0.12)',
-                  borderWidth:1,
-                  borderColor:'rgba(148,163,184,0.28)',
-                }}
-              >
-                <Feather name="move" size={14} color="#9FB3D1" />
-              </View>
-            </View>
-
-            <View>
-              <LastValueCardUI
-                title={settings.title}
-                tag={settings.tag}
-                onEdit={() => setOpen(true)}
-                onClear={onClear}
-              />
-
-              <Animated.View
-                pointerEvents="none"
-                style={[
-                  styles.swapOverlay,
-                  {
-                    opacity: glow,
-                    borderColor: (glow as any).interpolate({
-                      inputRange: [0, 1],
-                      outputRange: ['transparent', 'rgba(96,165,250,0.9)'],
-                    }),
-                  },
-                ]}
-              >
-                <Text style={styles.swapText}>Drop to swap</Text>
-              </Animated.View>
-            </View>
-          </View>
-        ) : (
-          <Pressable style={styles.addChartCta} onPress={() => setOpen(true)}>
-            <Text style={styles.addChartText}>+ Kart Oluştur</Text>
-            <Text style={styles.addChartHint}>Ad ver ve tag seç</Text>
-          </Pressable>
-        )}
-      </Animated.View>
-
-      <TagPickerModal
-        visible={open}
-        defaultTitle={settings?.title || 'Last Value'}
-        defaultTag={settings?.tag}
-        onClose={() => setOpen(false)}
-        onApply={onApply}
-      />
-    </DropZone>
-  );
-};
-
-/* =========================
-   Header
-========================= */
-const Header: React.FC<{
-  insetsTop: number;
-  pageTitle: string;
-  setPageTitle: (s:string)=>void;
-  editingTitle: boolean;
-  setEditingTitle: (b:boolean)=>void;
-  titleInput: string;
-  setTitleInput: (s:string)=>void;
-  autosave: boolean;
-  setAutosave: React.Dispatch<React.SetStateAction<boolean>>;
-  onManualSave: (slots: Partial<Record<SlotId, Slot>> | null)=>void;
-  lastSavedAt: number | null;
-}> = ({
-  insetsTop, pageTitle, setPageTitle, editingTitle, setEditingTitle,
-  titleInput, setTitleInput, autosave, setAutosave, onManualSave, lastSavedAt
+/* ---------- SlotBox ---------- */
+const SlotBox = ({
+  title, highlight, onLayoutRect, onBodyHeight, onEdit, onUndock, children,
+}: {
+  title: string;
+  highlight?: boolean;
+  onLayoutRect?: (r: LayoutRectangle) => void;
+  onBodyHeight?: (h: number) => void;
+  onEdit?: () => void;
+  onUndock?: () => void;
+  children?: React.ReactNode;
 }) => {
-  const { slots } = useDragDrop();
+  const outerRef = useRef<View>(null);
+
   return (
-    <View style={[styles.headerBar, { paddingTop: insetsTop + 6 }]}>
-      <StatusBar barStyle="light-content" />
-      <View style={styles.headerLeft}>
-        {!editingTitle ? (
-          <View style={styles.titleRow}>
-            <Text numberOfLines={1} ellipsizeMode="tail" style={styles.headerTitle}>{pageTitle}</Text>
-            <TouchableOpacity onPress={() => { setEditingTitle(true); setTitleInput(pageTitle); }} style={styles.titleEditBtn} hitSlop={{ top:6,bottom:6,left:6,right:6 }}>
-              <Feather name="edit-2" size={16} color="#9FB3D1" />
-            </TouchableOpacity>
+    <View
+      ref={outerRef}
+      style={[styles.slotOuter, highlight ? styles.slotOuterHighlight : undefined]}
+      onLayout={() => outerRef.current?.measureInWindow?.((x,y,w,h)=>onLayoutRect?.({x,y,width:w,height:h}))}
+    >
+      <View style={styles.slotHeader}>
+        <Feather name="grid" size={14} color="#60A5FA" />
+        <Text style={styles.slotHeaderText}>  {title}</Text>
+        {children ? (
+          <View style={{ marginLeft:'auto', flexDirection:'row' }}>
+            <Pressable onPress={onEdit} style={{ padding:4, marginRight:4 }}>
+              <Feather name="edit-2" size={14} color="#93C5FD" />
+            </Pressable>
+            <Pressable onPress={onUndock} style={{ padding:4 }}>
+              <Feather name="external-link" size={14} color="#93C5FD" />
+            </Pressable>
           </View>
-        ) : (
-          <View style={styles.titleEditRow}>
-            <TextInput
-              value={titleInput}
-              onChangeText={setTitleInput}
-              onSubmitEditing={() => { setPageTitle(titleInput.trim() || 'Untitled'); setEditingTitle(false); }}
-              onBlur={() => { setPageTitle(titleInput.trim() || 'Untitled'); setEditingTitle(false); }}
-              style={styles.titleInput}
-              placeholder="Sayfa adı"
-              placeholderTextColor="#7b8da4"
-              autoFocus
-            />
-            <TouchableOpacity onPress={() => { setPageTitle(titleInput.trim() || 'Untitled'); setEditingTitle(false); }} style={styles.titleSaveBtn}>
-              <Feather name="check" size={16} color="#0B1120" />
-            </TouchableOpacity>
-          </View>
-        )}
-        <Text style={styles.headerSub}>Son kaydetme: {fmtTime(lastSavedAt)}</Text>
+        ) : null}
       </View>
 
-      <View style={styles.headerActions}>
-        <Pressable onPress={() => setAutosave(v => !v)} style={[styles.seg, autosave && styles.segOn]}>
-          <Text style={[styles.segText, autosave && styles.segTextOn]}>{autosave ? 'Auto' : 'Manual'}</Text>
-        </Pressable>
-        <TouchableOpacity onPress={() => onManualSave(slots)} style={styles.iconBtnPrimary}>
-          <Feather name="save" size={16} color="#0B1120" />
-          <Text style={styles.iconBtnPrimaryText}>Kaydet</Text>
-        </TouchableOpacity>
+      <View
+        style={[styles.slotBody, children ? ({ padding: 0 } as ViewStyle) : undefined]}
+        onLayout={(e)=>onBodyHeight?.(e.nativeEvent.layout.height)}
+      >
+        {children ? children : (
+          <View style={[styles.dropHint, highlight && { borderColor: TOKENS.accentDeep, backgroundColor: 'rgba(56,189,248,0.08)' }]}>
+            <Feather name="move" size={16} color="#64748B" />
+            <Text style={styles.dropHintText}>Grafiği buraya bırak</Text>
+            <Text style={styles.dropHintSub}>veya alttaki + ile oluştur</Text>
+          </View>
+        )}
       </View>
     </View>
   );
 };
 
-/* =========================
-   Styles
-========================= */
+/* ---------- Styles ---------- */
 const styles = StyleSheet.create({
-  container: { flex: 1 },
-  content: { padding: 16, paddingBottom: 96 },
-
-  // Header
-  headerBar: {
-    minHeight: 72,
-    paddingHorizontal: 16,
-    backgroundColor: '#0b0f14',
-    borderBottomWidth: 1,
-    borderBottomColor: '#141a22',
-    flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between',
-    paddingBottom: 10,
+  root: { flex: 1, backgroundColor: TOKENS.bg },
+  header: {
+    position: 'absolute',
+    left: 0, right: 0, top: 0,
+    zIndex: 10,
+    paddingTop: 8,
+    paddingHorizontal: 12,
+    justifyContent: 'flex-end',
   },
-  headerLeft: { flex: 1, maxWidth: '58%' },
-  titleRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  titleEditRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  headerTitle: { color: '#EAF2FF', fontSize: 20, fontWeight: '900', letterSpacing: 0.2 },
-  headerSub: { color: '#8CA3BF', fontSize: 12, marginTop: 3 },
-  titleInput: {
-    flex: 1,
-    minWidth: 120,
-    maxWidth: '100%',
-    color: '#EAF2FF', fontSize: 18, fontWeight: '800',
-    borderBottomWidth: 1, borderBottomColor: 'rgba(148,163,184,0.35)',
-    paddingVertical: 4,
+  title: { color:'#E0F2FE', fontWeight:'800', fontSize:20 },
+  headerActionsBar: {
+    alignSelf: 'flex-end',
+    flexDirection: 'row',
+    gap: 8,
+    padding: 4,
+    marginTop: 6,
+    marginBottom: 6,
+    backgroundColor: 'rgba(2,6,23,0.55)',
+    borderWidth: 1,
+    borderColor: 'rgba(148,163,184,0.20)',
+    borderRadius: 10,
   },
-  titleEditBtn: { padding: 6, borderRadius: 8, backgroundColor: 'rgba(148,163,184,0.12)' },
-  titleSaveBtn: { padding: 8, borderRadius: 10, backgroundColor: '#60A5FA' },
-
-  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  seg: {
-    paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999,
-    borderWidth: 1, borderColor: 'rgba(148,163,184,0.3)', backgroundColor: 'rgba(2,6,23,0.6)'
+  actionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    height: 28,
+    paddingHorizontal: 8,
+    borderRadius: 8,
   },
-  segOn: { backgroundColor: 'rgba(96,165,250,0.18)', borderColor: 'rgba(96,165,250,0.45)' },
-  segText: { color: '#9FB3D1', fontWeight: '800' },
-  segTextOn: { color: '#E0F2FE' },
-
-  iconBtnPrimary: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12,
-    backgroundColor: '#60A5FA', borderWidth: 1, borderColor: 'rgba(96,165,250,0.55)'
+  actionPrimary: { backgroundColor: TOKENS.accent },
+  actionGhost: { backgroundColor: 'rgba(30,41,59,0.65)', borderWidth: 1, borderColor: 'rgba(147,197,253,0.30)' },
+  actionText: { fontSize: 12, fontWeight: '900' },
+  actionPressed: { transform: [{ scale: 0.98 }], opacity: 0.9 },
+  fab: {
+    position:'absolute', right:16, bottom:20,
+    width:48, height:48, borderRadius:24,
+    backgroundColor: TOKENS.accent,
+    alignItems:'center', justifyContent:'center',
+    shadowColor:'#000', shadowOpacity:0.25, shadowRadius:8, shadowOffset:{ width:0, height:6 }, elevation:6,
+    zIndex: 9,
   },
-  iconBtnPrimaryText: { color: '#0B1120', fontWeight: '900' },
-
-  // Rows
-  row: { flexDirection: 'row', gap: 12, marginBottom: 16 },
-  slotBare: {
-    flex: 1,
-    backgroundColor: 'transparent',
-    borderWidth: 0,
-    padding: 0,
-    marginBottom: 0,
-    zIndex: 1,
-  },
-
-  // Chart SlotBox styles
+  scrollContainer: { paddingBottom:20, paddingHorizontal:10, gap:10 },
   slotOuter: {
-    minHeight: 360,
-    borderRadius: 24,
+    minHeight: 220,
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: TOKENS.stroke,
     backgroundColor: TOKENS.surface,
     overflow: 'hidden',
-    marginBottom: 16,
   },
   slotOuterHighlight: {
     borderColor: 'rgba(96,165,250,0.9)',
     shadowColor:'#60A5FA',
     shadowOpacity:0.25,
-    shadowRadius:10,
-    elevation:4,
+    shadowRadius:6,
+    elevation:2,
   },
   slotHeader: {
-    height: 42, paddingHorizontal: 12, flexDirection:'row', alignItems:'center',
+    height: 32, paddingHorizontal: 8, flexDirection:'row', alignItems:'center',
     borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: 'rgba(148,163,184,0.16)',
   },
-  slotHeaderText: { color:'#BAE6FD', fontWeight:'800', fontSize:14, letterSpacing:1 },
-  slotBody: { flex: 1, padding: 10 },
+  slotHeaderText: { color:'#BAE6FD', fontWeight:'800', fontSize:12 },
+  slotBody: { flex: 1, padding: 6 },
   dropHint: {
-    flex:1, borderRadius:20, borderWidth:1.5, borderStyle:'dashed',
+    flex:1, borderRadius:12, borderWidth:1, borderStyle:'dashed',
     borderColor:'rgba(148,163,184,0.28)', alignItems:'center', justifyContent:'center',
-    gap:4, backgroundColor:'rgba(2,6,23,0.18)',
+    gap:2, backgroundColor:'rgba(2,6,23,0.18)',
   },
-  dropHintText: { color:'#94A3B8', fontSize:13 },
-  dropHintSub: { color:'#64748B', fontSize:12 },
-
-  // LV Cards
-  squareCard: {
-    flex: 1,
-    aspectRatio: 1,
-    backgroundColor: '#121821',
-    borderRadius: 18,
-    paddingHorizontal: 12,
-    paddingTop: 10,
-    borderWidth: 1,
-    borderColor: '#1f2732',
-    overflow: 'hidden',
-    shadowColor: '#000', shadowOpacity: 0.12, shadowRadius: 10,
-    shadowOffset: { width: 0, height: 6 }, elevation: 4,
-    zIndex: 1,
-  },
-  cardHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 4,
-  },
-  cardTitle: { color: '#e6eef8', fontSize: 14, fontWeight: '700', letterSpacing: 0.2 },
-  iconRow: { flexDirection: 'row', alignItems: 'center' },
-  iconText: { fontSize: 16, color: '#a9b4c0' },
-
-  lastValueBody: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  lastValueNumber: { color: '#EAF2FF', fontSize: 34, fontWeight: '900', letterSpacing: 0.3, marginTop: 6 },
-  placeholder: { color: '#6b7785', fontSize: 13 },
-
-  addChartCta: {
-    flex: 1,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#2a3442',
-    borderStyle: 'dashed',
-    alignItems: 'center',
-    justifyContent: 'center',
-    minHeight: 140
-  },
-  addChartText: { color: '#c7d2de', fontSize: 16, fontWeight: '800', marginBottom: 4 },
-  addChartHint: { color: TOKENS.hint, fontSize: 12 },
-
-  swapOverlay: {
-    position: 'absolute',
-    left: 6,
-    right: 6,
-    top: 6,
-    bottom: 6,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderStyle: 'dashed',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(96,165,250,0.06)'
-  },
-  swapText: { color: '#bcd8ff', fontWeight: '800', fontSize: 12, letterSpacing: 0.3 },
-
-  // FAB
-  fab: {
-    position:'absolute',
-    right:18, bottom:24,
-    width:56, height:56, borderRadius:28,
-    backgroundColor: TOKENS.accent,
-    alignItems:'center', justifyContent:'center',
-    shadowColor:'#000', shadowOpacity:0.28, shadowRadius:10, shadowOffset:{ width:0, height:8 }, elevation:8,
-    zIndex: 9,
-  },
-
-  // Toast
-  toast: {
-    position: 'absolute',
-    left: 0, right: 0, bottom: 20,
-    alignItems: 'center', justifyContent: 'center'
-  },
-  toastText: {
-    backgroundColor: 'rgba(17,24,39,0.92)',
-    borderWidth: 1, borderColor: 'rgba(147,197,253,0.35)',
-    color: '#EAF2FF',
-    paddingHorizontal: 14, paddingVertical: 8,
-    borderRadius: 999,
-    fontWeight: '900'
-  },
-
-  // Modal (TagPicker)
-  modalBackdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 16,
-  },
-  pickerCard: {
-    width: '100%',
-    maxWidth: 420,
-    backgroundColor: '#0f141b',
-    borderRadius: 18,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: '#1e2530',
-  },
-  modalTitle: { color: '#e6eef8', fontSize: 16, fontWeight: '700', marginBottom: 8 },
-  fieldLabel: { color: '#9fb3d1', fontSize: 12, marginBottom: 6 },
-  searchInput: {
-    width: '100%',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#253041',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    color: '#e6eef8',
-    marginBottom: 10,
-  },
-  pickerItem: {
-    paddingVertical: 10,
-    paddingHorizontal: 8,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#1f2732',
-  },
-  pickerItemText: { color: '#c5cfda', fontSize: 14 },
-  btn: {
-    backgroundColor: '#2563eb',
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  btnText: { color: '#fff', fontWeight: '800' },
+  dropHintText: { color:'#94A3B8', fontSize:11 },
+  dropHintSub: { color:'#64748B', fontSize:10 },
 });
