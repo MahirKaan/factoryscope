@@ -1,5 +1,12 @@
 // components/dragdrop/DragDropContext.tsx
-import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import React, {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import type { DragDropContextValue, Slot, SlotId, SlotRect } from './types';
 
 type ProviderProps = {
@@ -18,14 +25,21 @@ type ProviderProps = {
 const DragDropContext = createContext<DragDropContextValue>({
   slots: null,
   hoveredSlotId: null,
-  registerSlot: () => {},
-  updateHover: () => {},
+  registerSlot: (_id, _slot, _rect) => {},
+  updateHover: (_absX: number, _absY: number) => {},
   cancelDrag: () => {},
 });
 
-export function DragDropProvider({ children, initialSlots, setScrollLocked, onChange }: ProviderProps) {
+export function DragDropProvider({
+  children,
+  initialSlots,
+  setScrollLocked,
+  onChange,
+}: ProviderProps) {
   // Sadece Slot map’i (rect’ler ayrı tutulur)
-  const [slotMap, setSlotMap] = useState<Partial<Record<SlotId, Slot>> | null>(null);
+  const [slotMap, setSlotMap] = useState<Partial<Record<SlotId, Slot>> | null>(
+    null
+  );
 
   // Slot’ların ekran rect’leri (hover hesaplamak için)
   const rectMapRef = useRef<Partial<Record<SlotId, SlotRect>>>({});
@@ -49,18 +63,18 @@ export function DragDropProvider({ children, initialSlots, setScrollLocked, onCh
 
   // DropZone’dan kayıt/güncelleme
   const registerSlot = (id: SlotId, slot: Slot, rect: SlotRect) => {
-    // slot bilgisi değişmiş mi?
     setSlotMap((prev) => {
       const cur = prev ? { ...prev } : {};
       const before = cur[id];
       const changed =
         !before ||
         before.widgetId !== slot.widgetId ||
-        before.accepts !== slot.accepts; // referans değişimi bile update sebebi olabilir
+        before.accepts !== slot.accepts;
 
       if (changed) {
         cur[id] = { ...slot };
       }
+
       // rect’i internal map’te tut
       const prevRect = rectMapRef.current[id];
       const rectChanged =
@@ -82,8 +96,8 @@ export function DragDropProvider({ children, initialSlots, setScrollLocked, onCh
     });
   };
 
+  // Drag sırasında hover güncelleme
   const updateHover = (absX: number, absY: number) => {
-    // Hangi rect içindeyiz?
     let hit: SlotId | null = null;
     const rectMap = rectMapRef.current;
     const keys = Object.keys(rectMap) as SlotId[];
@@ -91,8 +105,15 @@ export function DragDropProvider({ children, initialSlots, setScrollLocked, onCh
       const k = keys[i];
       const r = rectMap[k];
       if (!r) continue;
-      const inside = absX >= r.x && absX <= r.x + r.width && absY >= r.y && absY <= r.y + r.height;
-      if (inside) { hit = k; break; }
+      const inside =
+        absX >= r.x &&
+        absX <= r.x + r.width &&
+        absY >= r.y &&
+        absY <= r.y + r.height;
+      if (inside) {
+        hit = k;
+        break;
+      }
     }
     if (hit !== hoveredSlotId) {
       setHoveredSlotId(hit);
@@ -104,15 +125,22 @@ export function DragDropProvider({ children, initialSlots, setScrollLocked, onCh
     setScrollLocked?.(false);
   };
 
-  const value = useMemo<DragDropContextValue>(() => ({
-    slots: slotMap,
-    hoveredSlotId,
-    registerSlot,
-    updateHover,
-    cancelDrag,
-  }), [slotMap, hoveredSlotId]);
+  const value = useMemo<DragDropContextValue>(
+    () => ({
+      slots: slotMap,
+      hoveredSlotId,
+      registerSlot,
+      updateHover,
+      cancelDrag,
+    }),
+    [slotMap, hoveredSlotId]
+  );
 
-  return <DragDropContext.Provider value={value}>{children}</DragDropContext.Provider>;
+  return (
+    <DragDropContext.Provider value={value}>
+      {children}
+    </DragDropContext.Provider>
+  );
 }
 
 export const useDragDrop = () => useContext(DragDropContext);

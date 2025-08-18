@@ -4,8 +4,8 @@
     "strict": true,
     "baseUrl": ".",
     "skipLibCheck": true,
-    "jsx": "react-jsx",              // ✅ JSX desteği eklendi
-    "types": ["react", "react-native"], // ✅ React & React Native tipi desteği
+    "jsx": "react-jsx",              
+    "types": ["react", "react-native"], 
     "paths": {
       "@images/*": ["./assets/images/*"],
       "@components/*": ["./components/*"],

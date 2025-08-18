@@ -17,11 +17,9 @@ import {
 import DraggableResizableChart from '../components/charts/DraggableResizableChart';
 import ChartSettingsModal from '../components/ChartSettingsModal';
 import SaveTemplateModal from '../components/SaveTemplateModal';
+import TagBox from '../components/TagBox';
 import { mockChartData } from '../mock/mockChartData';
 import { getTemplate, saveNewTemplate, TemplateSnapshot } from '../storage/savedTemplates';
-
-// ✅ Yeni eklenen component
-import TagBox from '../components/TagBox';
 
 type ChartConfig = {
   id: string;
@@ -36,7 +34,6 @@ type SlotId = 'slot1' | 'slot2';
 
 const uid = () => Math.random().toString(36).slice(2);
 
-// Design tokens
 const TOKENS = {
   bg: '#0B1120',
   surface: 'rgba(2,6,23,0.35)',
@@ -47,8 +44,8 @@ const TOKENS = {
   accent: '#7DD3FC',
   accentDeep: '#38BDF8',
 };
-const HEADER_EXPANDED = 100;   // küçültüldü
-const HEADER_COLLAPSED = 52;   // küçültüldü
+const HEADER_EXPANDED = 100;
+const HEADER_COLLAPSED = 52;
 
 const chartColors = [
   '#38BDF8', '#F472B6', '#34D399', '#FBBF24',
@@ -76,13 +73,10 @@ export default function Template1Screen() {
   const [floating, setFloating] = useState<{ id: string; cfg: ChartConfig; x: number; y: number }[]>([]);
   const [modalVisible, setModalVisible] = useState(false);
   const [editDraft, setEditDraft] = useState<{ cfg: ChartConfig | null }>({ cfg: null });
-
-  // Save modal
   const [saveModal, setSaveModal] = useState<{ visible: boolean; defaultName: string }>({
     visible: false, defaultName: '',
   });
 
-  // slot measure + hover
   const [slotRects, setSlotRects] = useState<Record<SlotId, LayoutRectangle | null>>({ slot1: null, slot2: null });
   const [slotHeights, setSlotHeights] = useState<Record<SlotId, number>>({ slot1: 0, slot2: 0 });
   const [hoveredSlot, setHoveredSlot] = useState<SlotId | null>(null);
@@ -141,16 +135,17 @@ export default function Template1Screen() {
   };
   const removeFromSlot = (zone: SlotId) => setSlots(p => ({ ...p, [zone]: null }));
 
+  // ✅ DÜZELTME: Artık `data` ve `labels` döner
   const toChartProps = (cfg: ChartConfig) => {
     const labels = generateTimeLabels(cfg.startTime, cfg.endTime, cfg.freq);
-    const datasets = cfg.tags.map((tag, i) => {
+    const data = cfg.tags.map((tag, i) => {
       const rawValues = mockChartData[tag]?.values || [];
       const safe = Array.from({ length: Math.min(labels.length, rawValues.length) }).map((_, j) => {
         const v = rawValues[j]; return (typeof v === 'number' && isFinite(v)) ? v : 0;
       });
       return { data: safe, color: () => chartColors[i % chartColors.length] };
     });
-    return { datasets, labels };
+    return { data, labels };
   };
 
   const undockFromSlot = (sid: SlotId) => {
@@ -159,7 +154,6 @@ export default function Template1Screen() {
     removeFromSlot(sid);
   };
 
-  // Saved template yükleme
   React.useEffect(()=>{
     if(!openSavedId) return;
     (async ()=>{
@@ -215,7 +209,7 @@ export default function Template1Screen() {
           <View key={f.id} style={StyleSheet.absoluteFill} pointerEvents="box-none">
             <View style={{ position:'absolute', left:f.x, top:f.y, right:0 }} pointerEvents="box-none">
               <DraggableResizableChart
-                data={p.datasets}
+                data={p.data}
                 labels={p.labels}
                 tags={f.cfg.tags}
                 sampleType={f.cfg.sampleType}
@@ -232,7 +226,7 @@ export default function Template1Screen() {
         );
       })}
 
-      {/* Content - tek ekran */}
+      {/* Content */}
       <View style={[styles.scrollContainer, { paddingTop: HEADER_EXPANDED + 4 }]}>
         <View style={{ flexDirection: 'row', gap: 6 }}>
           <TagBox title="Kutucuk 1" />
@@ -255,13 +249,12 @@ export default function Template1Screen() {
             const cfg = slots.slot1!;
             return (
               <DraggableResizableChart
-                data={p.datasets}
+                data={p.data}
                 labels={p.labels}
                 tags={cfg.tags}
                 sampleType={cfg.sampleType}
                 freq={cfg.freq}
                 mode="docked"
-                // ⚡ Docked iken tam görünsün diye compact kaldırıldı
                 variant="fill"
                 idealHeight={slotHeights.slot1||0}
                 onDelete={() => removeFromSlot('slot1')}
@@ -292,7 +285,7 @@ export default function Template1Screen() {
             const cfg = slots.slot2!;
             return (
               <DraggableResizableChart
-                data={p.datasets}
+                data={p.data}
                 labels={p.labels}
                 tags={cfg.tags}
                 sampleType={cfg.sampleType}
@@ -308,7 +301,7 @@ export default function Template1Screen() {
         </SlotBox>
       </View>
 
-      {/* Chart Settings */}
+      {/* Modals */}
       <ChartSettingsModal
         visible={modalVisible}
         onClose={() => setModalVisible(false)}
@@ -325,7 +318,6 @@ export default function Template1Screen() {
         }
       />
 
-      {/* Save Modal */}
       <SaveTemplateModal
         visible={saveModal.visible}
         defaultName={saveModal.defaultName}

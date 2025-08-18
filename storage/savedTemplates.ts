@@ -4,14 +4,15 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 export type TemplateSnapshot = {
   id: string;
   name: string;
-  createdAt: string; // ISO
-  updatedAt: string; // ISO
-  screen: 'Template1';
+  createdAt: string;
+  updatedAt: string;
+  screen: 'Template1' | 'Template2' | 'Template3'; // 🔥 burayı genişlet
   state: {
-    slots: any;      // { slot1: ChartConfig|null, slot2: ChartConfig|null }
-    floating: any[]; // floating kartların konfigleri
+    slots: any;
+    floating: any[];
   };
 };
+
 
 const LIST_KEY = 'factorypulse/saves/list/v1';
 const ITEM_KEY = (id: string) => `factorypulse/saves/item/${id}/v1`;

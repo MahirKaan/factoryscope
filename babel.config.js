@@ -20,6 +20,7 @@ module.exports = function (api) {
           },
         },
       ],
+      // ⚡️ Bu plugin en sonda kalmalı
       'react-native-reanimated/plugin',
     ],
   };
